@@ -97,7 +97,7 @@ const PC={ST:['#DBEAFE','#1E40AF'],STP:['#E0E7FF','#3730A3'],STPR:['#FCE7F3','#9
 
 const mc={auth:{clientId:C.clientId,authority:'https://login.microsoftonline.com/'+C.tenantId,redirectUri:C.redirect},cache:{cacheLocation:'localStorage'}};
 const msalApp=new msal.PublicClientApplication(mc);
-const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read','Mail.Send'];
+const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read'/*,'Mail.Send'*/];
 let tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid,isAdmin=false;
 let sessionChanges=[];
 let allComments=[],cmtSheetReady=false;
@@ -172,9 +172,10 @@ async function sendNotifyEmail(){
   if(isAdmin)recip.push(...ADMINS.filter(e=>e!==usrMail).map(e=>({emailAddress:{address:e}})));
   if(!recip.length){toast('No recipients','er');return}
   try{
-    await gPost('/me/sendMail',{message:{subject:'IDB Hub — '+usr+' activity',body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});
+    // EMAIL DISABLED — uncomment below + add Mail.Send to scopes to enable
+    // await gPost('/me/sendMail',{message:{subject:'IDB Hub — '+usr+' activity',body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});
     for(const c of sessionChanges)await writeNotif(c.type,c.id,c.tab||S.tab,c.status||c.text||'');
-    const cnt=sessionChanges.length;sessionChanges=[];toast('Sent ('+cnt+' items)','ok');render()
+    const cnt=sessionChanges.length;sessionChanges=[];toast('Logged '+cnt+' items (email disabled)','ok');render()
   }catch(e){toast('Email failed: '+e.message,'er');console.error(e)}
 }
 
