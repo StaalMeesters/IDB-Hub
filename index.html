@@ -108,7 +108,7 @@ function aprCol(name){if(!name)return'#6B7280';if(!aprColMap[name]){const i=Obje
 
 const mc={auth:{clientId:C.clientId,authority:'https://login.microsoftonline.com/'+C.tenantId,redirectUri:C.redirect},cache:{cacheLocation:'localStorage'}};
 const msalApp=new msal.PublicClientApplication(mc);
-const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read'/*,'Mail.Send'*/];
+const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read','Mail.Send'];
 let tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid;
 let isAdmin=false,isFinal=false;
 let sessionChanges=[];
@@ -146,11 +146,21 @@ async function writeNotif(action,rowId,tab,details){await ensureNotifSheet();con
 async function sendNotifyEmail(){
   if(!sessionChanges.length){toast('No changes','er');return}
   const ap=sessionChanges.filter(c=>c.type==='approve'),rj=sessionChanges.filter(c=>c.type==='reject'),cm=sessionChanges.filter(c=>c.type==='comment'),cf=sessionChanges.filter(c=>c.type==='confirm'),rt=sessionChanges.filter(c=>c.type==='return');
+  let body='<h2 style="color:#1E3A5F">IDB Approval Hub — Activity Summary</h2><p><b>By:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+'</p><hr>';
+  if(ap.length){const th=ap.reduce((s,c)=>s+(c.hours||0),0);body+='<h3 style="color:#059669">\u2705 Approved: '+ap.length+' items ('+th.toFixed(1)+'h / \u20AC'+(th*RATE).toFixed(0)+')</h3><ul>';ap.forEach(c=>body+='<li>#'+c.id+' \u2014 '+c.status+' '+(c.hours||0).toFixed(1)+'h'+(c.comment?' ('+c.comment+')':'')+'</li>');body+='</ul>'}
+  if(rj.length){body+='<h3 style="color:#DC2626">\u274C Rejected: '+rj.length+' items</h3><ul>';rj.forEach(c=>body+='<li>#'+c.id+(c.comment?' \u2014 '+c.comment:'')+'</li>');body+='</ul>'}
+  if(cf.length){body+='<h3 style="color:#8B5CF6">\uD83D\uDD12 Confirmed: '+cf.length+' items</h3><ul>';cf.forEach(c=>body+='<li>#'+c.id+'</li>');body+='</ul>'}
+  if(rt.length){body+='<h3 style="color:#F59E0B">\u21A9 Returned: '+rt.length+' items</h3><ul>';rt.forEach(c=>body+='<li>#'+c.id+(c.comment?' \u2014 '+c.comment:'')+'</li>');body+='</ul>'}
+  if(cm.length){body+='<h3 style="color:#3B82F6">\uD83D\uDCAC Comments: '+cm.length+'</h3><ul>';cm.forEach(c=>body+='<li>#'+c.id+': '+c.text+'</li>');body+='</ul>'}
+  body+='<hr><p><a href="'+C.redirect+'">Open IDB Approval Hub</a></p>';
+  const recip=isAdmin?ADMINS.filter(e=>e!==usrMail).map(e=>({emailAddress:{address:e}})):[{emailAddress:{address:'mt@idb.sk'}},{emailAddress:{address:'vy@idb.sk'}}];
+  if(isFinal)recip.push(...ADMINS.map(e=>({emailAddress:{address:e}})));
+  if(!recip.length){toast('No recipients','er');return}
   try{
+    await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 '+usr+' activity',body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});
     for(const c of sessionChanges)await writeNotif(c.type,c.id,c.tab||S.tab,c.status||c.text||'');
-    const cnt=sessionChanges.length;sessionChanges=[];toast('Logged '+cnt+' items (email disabled)','ok');render()
-    // EMAIL DISABLED — uncomment + add Mail.Send to scopes to enable
-  }catch(e){toast('Failed: '+e.message,'er')}
+    const cnt=sessionChanges.length;sessionChanges=[];toast('Sent '+cnt+' items','ok');render()
+  }catch(e){toast('Email failed: '+e.message,'er');console.error(e)}
 }
 
 // STATE
