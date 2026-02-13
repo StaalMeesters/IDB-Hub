@@ -120,7 +120,7 @@ const msalApp=new msal.PublicClientApplication(mc);
 const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read','Mail.Send'];
 let tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid;
 let isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
-let sessionChanges=[];
+
 let allComments=[],allNotifs=[];
 
 async function login(){try{await msalApp.loginRedirect({scopes:sc})}catch(e){console.error(e)}}
@@ -160,7 +160,6 @@ async function addComment(rowId,tab,text){
   const fid=tab==='hours'?hFid:pFid;const ts=new Date().toISOString();
   await appendSheet(fid,'Comments',[rowId,tab,usr,usrMail,ts,text]);
   allComments.push({rowId:String(rowId),tab,author:usr,email:usrMail,ts,text,src:tab==='hours'?'h':'p'});
-  sessionChanges.push({type:'comment',id:rowId,tab,text,by:usr});
 }
 function getComments(rid){return allComments.filter(c=>c.rowId===String(rid))}
 function hasComments(rid){return allComments.some(c=>c.rowId===String(rid))}
@@ -176,29 +175,19 @@ async function writeNotif(action,rowId,tab,details){
 }
 
 // Send email
-async function sendNotifyEmail(){
-  if(!sessionChanges.length){toast('No changes','er');return}
-  const rm=sessionChanges.filter(c=>c.type==='remind');
-  try{
-    // Log all changes to Notifications sheet (Power Automate reads this weekly)
-    for(const c of sessionChanges)await writeNotif(c.type,c.id,c.tab||S.tab,c.status||c.text||c.newAssignee||'');
-    // Only send direct email for Remind actions (urgent, targeted)
-    if(rm.length){
-      for(const r of rm){
-        const approver=r.approver||'Approver';
-        const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 Task Reminder</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+'</p><hr><p>You have a pending task <b>#'+r.id+'</b> awaiting your approval.</p><p>Please review it at your earliest convenience.</p><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub</a></p>';
-        const recipSet=new Set();
-        if(r.approverEmail)recipSet.add(r.approverEmail);
-        else{const match=ASSIGNEES.find(a=>a===approver);if(match){/* email lookup needed */}}
-        recipSet.add('mt@idb.sk');recipSet.add('vy@idb.sk');
-        recipSet.delete(usrMail);
-        const recip=[...recipSet].map(e=>({emailAddress:{address:e}}));
-        if(recip.length){try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Reminder: Task #'+r.id,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false})}catch(e){console.error('Remind email failed:',e)}}
-      }
-    }
-    const cnt=sessionChanges.length;sessionChanges=[];
-    toast('Logged '+cnt+' changes'+(rm.length?' + sent '+rm.length+' reminder(s)':''),'ok');render()
-  }catch(e){toast('Failed: '+e.message,'er');console.error(e)}
+async function sendRemindEmail(it){
+  const isH=it.id.startsWith('H');const approver=isH?it.AF:it.OB;const nw=nowISO();
+  if(isH){it.rsa=nw;await writeR(hFid,C.hSheet,'Z'+it.row,[nw])}
+  else{it.rsa=nw;await writeR(pFid,C.pSheet,'AB'+it.row,[nw])}
+  const itemDesc=isH?'Hours #'+it.I+' \u2014 '+it.E+' ('+it.D+')':'PO-'+it.I+' \u2014 '+(it.J||it.Z);
+  const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 Task Reminder</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+'</p><hr><p>You have a pending task <b>#'+it.I+'</b> awaiting your approval.</p><p><b>Task:</b> '+itemDesc+'</p><p>Please review it at your earliest convenience.</p><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub</a></p>';
+  const emailMap={"Rene Bos":"rb@staalmeesters.com","Rob Bos":"rob@staalmeesters.com","Floris uit het Broek":"fub@staalmeesters.com","Ashkan Karamroudi":"ak@staalmeesters.com","Jan Barelds":"jb@staalmeesters.com","Ronald Janneman":"rj@staalmeesters.com","Bob Laan":"bl@staalmeesters.com","Marc Volker":"mv@staalmeesters.com","Ruud Bult":"rub@staalmeesters.com"};
+  const approverEmail=emailMap[approver];
+  const recip=[];
+  if(approverEmail&&approverEmail!==usrMail)recip.push({emailAddress:{address:approverEmail}});
+  if(!recip.length){toast('No email for '+approver,'er');return}
+  try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Reminder: '+itemDesc,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});toast('Reminder sent to '+approver,'ok');render()}
+  catch(e){toast('Remind failed: '+e.message,'er');console.error(e)}
 }
 
 // STATE
@@ -238,21 +227,21 @@ async function loadData(){
       rsa:r[27]||''
     }));
     await initSheets();
-    await Promise.all([loadComments(),loadNotifs()]);
+    await Promise.all([loadComments(),loadNotifs(),loadDigestDate()]);
     S.phase='app';
   }catch(e){S.err=e.message;S.phase='error';console.error(e)}
   render();
 }
 
 // ACTIONS
-async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;toast(st+' '+h.toFixed(2)+'h','ok');render();sessionChanges.push({type:'approve',id:it.I,tab:'hours',status:st,hours:h,comment:c});writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']).catch(e=>toast('Save fail','er'))}
-async function rjH(it,c){const nw=nowISO();it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;toast('Rejected','er');render();sessionChanges.push({type:'reject',id:it.I,tab:'hours',status:'Rejected',comment:c});writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']).catch(e=>toast('Save fail','er'))}
-async function apP(it,q,c){const a=Math.abs(q-it.Q)>.5,st=a?'Adjusted':'Approved',nw=nowISO();it.st=st;it.aq=q;it.cm=c;it.sb=usr;it.ad=nw;toast('PO '+st,'ok');render();sessionChanges.push({type:'approve',id:it.I,tab:'po',status:st,hours:q,comment:c});Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,[st,q,c,usr])]).catch(e=>toast('Save fail','er'))}
-async function rjP(it,c){const nw=nowISO();it.st='Disapproved';it.aq=0;it.cm=c;it.sb=usr;it.ad=nw;toast('Disapproved','er');render();sessionChanges.push({type:'reject',id:it.I,tab:'po',status:'Disapproved',comment:c});Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Disapproved',0,c||'Disapproved',usr])]).catch(e=>toast('Save fail','er'))}
-async function confirmH(it){const nw=nowISO();it.fs='Confirmed';it.fsb=usr;it.fd=nw;toast('Confirmed #'+it.I,'ok');render();sessionChanges.push({type:'confirm',id:it.I,tab:'hours',status:'Confirmed'});writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Confirmed',usr,nw]).catch(e=>toast('Save fail','er'))}
-async function returnH(it,c){const nw=nowISO();it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';toast('Returned #'+it.I,'er');render();sessionChanges.push({type:'return',id:it.I,tab:'hours',status:'Returned',comment:c});await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Returned',usr,nw]);writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Pending','','','','','No']).catch(e=>toast('Save fail','er'))}
-async function confirmP(it){const nw=nowISO();it.fs='Confirmed';it.fsb=usr;it.fd=nw;toast('PO Confirmed','ok');render();sessionChanges.push({type:'confirm',id:it.I,tab:'po',status:'Confirmed'});writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Confirmed',usr,nw]).catch(e=>toast('Save fail','er'))}
-async function returnP(it,c){const nw=nowISO();it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.aq=null;it.sb='';toast('PO Returned','er');render();sessionChanges.push({type:'return',id:it.I,tab:'po',status:'Returned',comment:c});await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Returned',usr,nw]);writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Pending','','','']).catch(e=>toast('Save fail','er'))}
+async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;toast(st+' '+h.toFixed(2)+'h','ok');render();writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']).catch(e=>toast('Save fail','er'))}
+async function rjH(it,c){const nw=nowISO();it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;toast('Rejected','er');render();writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']).catch(e=>toast('Save fail','er'))}
+async function apP(it,q,c){const a=Math.abs(q-it.Q)>.5,st=a?'Adjusted':'Approved',nw=nowISO();it.st=st;it.aq=q;it.cm=c;it.sb=usr;it.ad=nw;toast('PO '+st,'ok');render();Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,[st,q,c,usr])]).catch(e=>toast('Save fail','er'))}
+async function rjP(it,c){const nw=nowISO();it.st='Disapproved';it.aq=0;it.cm=c;it.sb=usr;it.ad=nw;toast('Disapproved','er');render();Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Disapproved',0,c||'Disapproved',usr])]).catch(e=>toast('Save fail','er'))}
+async function confirmH(it){const nw=nowISO();it.fs='Confirmed';it.fsb=usr;it.fd=nw;toast('Confirmed #'+it.I,'ok');render();writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Confirmed',usr,nw]).catch(e=>toast('Save fail','er'))}
+async function returnH(it,c){const nw=nowISO();it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';toast('Returned #'+it.I,'er');render();await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Returned',usr,nw]);writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Pending','','','','','No']).catch(e=>toast('Save fail','er'))}
+async function confirmP(it){const nw=nowISO();it.fs='Confirmed';it.fsb=usr;it.fd=nw;toast('PO Confirmed','ok');render();writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Confirmed',usr,nw]).catch(e=>toast('Save fail','er'))}
+async function returnP(it,c){const nw=nowISO();it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.aq=null;it.sb='';toast('PO Returned','er');render();await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Returned',usr,nw]);writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Pending','','','']).catch(e=>toast('Save fail','er'))}
 
 // Reassign
 async function reassign(it,newName){
@@ -260,7 +249,6 @@ async function reassign(it,newName){
   if(isH){it.AF=newName;await writeR(hFid,C.hSheet,'P'+it.row,[newName])}
   else{it.OB=newName;await writeR(pFid,C.pSheet,'R'+it.row,[newName])}
   toast('Reassigned to '+newName,'ok');render();
-  sessionChanges.push({type:'reassign',id:it.I,tab:isH?'hours':'po',newAssignee:newName,oldAssignee:oldAF});
 }
 
 // Remind
@@ -269,7 +257,6 @@ async function remindApprover(it){
   if(isH){it.rsa=nw;await writeR(hFid,C.hSheet,'Z'+it.row,[nw])}
   else{it.rsa=nw;await writeR(pFid,C.pSheet,'AB'+it.row,[nw])}
   toast('Reminder queued for '+approver,'ok');render();
-  sessionChanges.push({type:'remind',id:it.I,tab:isH?'hours':'po',approver:approver});
 }
 
 async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');for(const it of items){if(curTab()==='hours')await apH(it,it.Q,'');else await apP(it,it.Q,'');}S.sel=new Set();toast(items.length+' approved','ok')}
@@ -384,7 +371,7 @@ window.doR=async()=>{const d=S.det,c=document.getElementById('dcm')?.value||'';t
 window.doConfirm=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await confirmH(it);else await confirmP(it)}catch(e){toast('Error','er')}};
 window.doReturn=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await returnH(it,'');else await returnP(it,'')}catch(e){toast('Error','er')}};
 window.doReassign=async(id,name)=>{closeModal();const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{await reassign(it,name)}catch(e){toast('Error','er')}};
-window.doRemind=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{await remindApprover(it)}catch(e){toast('Error','er')}};
+window.doRemind=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{await sendRemindEmail(it)}catch(e){toast('Error','er')}};
 window.showReassignModal=showReassignModal;
 window.sAdj=v=>{S.adj=v;renderSB()};
 window.doB=async()=>{try{await bulkA()}catch(e){toast('Error','er')}};
@@ -392,10 +379,80 @@ window.doBC=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
 window.doBConfirm=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
 window.doRef=loadData;
 window.doSignOut=()=>{msalApp.logoutRedirect({postLogoutRedirectUri:C.redirect})};
-window.doNotify=sendNotifyEmail;
+
 window.tNotif=()=>{S.notifOpen=!S.notifOpen;render()};
 
 // Column resize
+// WEEKLY DIGEST
+let lastDigestDate=null;
+async function loadDigestDate(){
+  try{
+    await ensureSheet(hFid,'DigestLog',['Timestamp','SentBy','Recipients']);
+    const rows=await readSheet(hFid,'DigestLog');
+    if(rows.length)lastDigestDate=rows[rows.length-1][0]||null;
+  }catch(e){console.error('DigestLog load:',e)}
+}
+async function sendDigest(){
+  if(!isFinal&&!isSenior){toast('Only admins can send digest','er');return}
+  // Get all notifications since last digest
+  const since=lastDigestDate||'1970-01-01T00:00:00Z';
+  const recent=allNotifs.filter(n=>n.ts>since).sort((a,b)=>a.ts.localeCompare(b.ts));
+  if(!recent.length){toast('No new activity since last digest','er');return}
+  // Group by actor
+  const byActor={};
+  recent.forEach(n=>{if(!byActor[n.actor])byActor[n.actor]=[];byActor[n.actor].push(n)});
+  // Build email
+  const now=new Date();
+  const fromDate=lastDigestDate?new Date(lastDigestDate).toLocaleDateString('en-GB'):'beginning';
+  let body='<div style="font-family:Segoe UI,sans-serif;max-width:700px;margin:0 auto">';
+  body+='<div style="background:linear-gradient(135deg,#1E3A5F,#0F2439);padding:20px 24px;border-radius:12px 12px 0 0;color:#fff"><h1 style="margin:0;font-size:20px">IDB Approval Hub \u2014 Activity Digest</h1><p style="margin:6px 0 0;opacity:.7;font-size:13px">'+fromDate+' \u2192 '+now.toLocaleDateString('en-GB')+'</p></div>';
+  body+='<div style="background:#fff;padding:20px 24px;border:1px solid #E5E7EB;border-top:0">';
+  body+='<p style="color:#6B7280;font-size:13px;margin-bottom:16px"><b>'+recent.length+'</b> actions by <b>'+Object.keys(byActor).length+'</b> users</p>';
+  // Summary counts
+  const counts={approve:0,reject:0,confirm:0,return:0,comment:0,reassign:0,remind:0};
+  recent.forEach(n=>{if(counts[n.action]!==undefined)counts[n.action]++});
+  body+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">';
+  if(counts.approve)body+='<span style="background:#D1FAE5;color:#065F46;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">\u2705 '+counts.approve+' approved</span>';
+  if(counts.reject)body+='<span style="background:#FEE2E2;color:#991B1B;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">\u274C '+counts.reject+' rejected</span>';
+  if(counts.confirm)body+='<span style="background:#EDE9FE;color:#6D28D9;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">\uD83D\uDD12 '+counts.confirm+' confirmed</span>';
+  if(counts.return)body+='<span style="background:#FEF3C7;color:#92400E;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">\u21A9 '+counts.return+' returned</span>';
+  if(counts.comment)body+='<span style="background:#DBEAFE;color:#1E40AF;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">\uD83D\uDCAC '+counts.comment+' comments</span>';
+  if(counts.reassign)body+='<span style="background:#FEF3C7;color:#92400E;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">\uD83D\uDD04 '+counts.reassign+' reassigned</span>';
+  body+='</div>';
+  // Per-actor breakdown
+  Object.keys(byActor).sort().forEach(actor=>{
+    const acts=byActor[actor];
+    body+='<div style="margin-bottom:14px;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">';
+    body+='<div style="background:#F9FAFB;padding:10px 14px;font-weight:700;font-size:13px;border-bottom:1px solid #E5E7EB">'+actor+' <span style="font-weight:400;color:#6B7280">('+acts.length+' actions)</span></div>';
+    body+='<div style="padding:8px 14px">';
+    acts.forEach(a=>{
+      const ic=a.action==='approve'?'\u2705':a.action==='reject'?'\u274C':a.action==='confirm'?'\uD83D\uDD12':a.action==='return'?'\u21A9':a.action==='comment'?'\uD83D\uDCAC':a.action==='reassign'?'\uD83D\uDD04':'\uD83D\uDD14';
+      const dt=new Date(a.ts);const ts=dt.toLocaleDateString('en-GB')+' '+dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+      body+='<div style="padding:4px 0;font-size:12px;border-bottom:1px solid #F3F4F6">'+ic+' <b>#'+a.rowId+'</b> '+a.action+(a.details?' \u2014 '+a.details:'')+' <span style="color:#9CA3AF;font-size:10px">'+ts+'</span></div>';
+    });
+    body+='</div></div>';
+  });
+  // Current status summary
+  const hPenAll=S.hrs.filter(d=>d.st==='Pending').length;
+  const pPenAll=S.pos.filter(d=>d.st==='Pending').length;
+  const hAprAll=S.hrs.filter(d=>d.st==='Approved'||d.st==='Adjusted').length;
+  const pAprAll=S.pos.filter(d=>d.st==='Approved'||d.st==='Adjusted').length;
+  body+='<div style="margin-top:16px;padding:14px;background:#F9FAFB;border-radius:8px;border:1px solid #E5E7EB"><div style="font-weight:700;font-size:13px;margin-bottom:8px">Current Status</div>';
+  body+='<div style="font-size:12px;color:#374151">Hours: <b>'+hPenAll+'</b> pending, <b>'+hAprAll+'</b> approved | PO: <b>'+pPenAll+'</b> pending, <b>'+pAprAll+'</b> approved</div></div>';
+  body+='</div>';
+  body+='<div style="background:#F9FAFB;padding:14px 24px;border-radius:0 0 12px 12px;border:1px solid #E5E7EB;border-top:0;text-align:center"><a href="'+C.redirect+'" style="color:#4F46E5;font-weight:600;font-size:13px">Open IDB Approval Hub</a></div></div>';
+  const recip=[{emailAddress:{address:'mt@idb.sk'}},{emailAddress:{address:'vy@idb.sk'}}];
+  try{
+    await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Weekly Digest ('+now.toLocaleDateString('en-GB')+')',body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});
+    // Log digest send
+    const ts=nowISO();
+    await appendSheet(hFid,'DigestLog',[ts,usr,'mt@idb.sk, vy@idb.sk']);
+    lastDigestDate=ts;
+    toast('Digest sent to Marek & Viktoriia','ok');render();
+  }catch(e){toast('Digest failed: '+e.message,'er');console.error(e)}
+}
+window.sendDigest=sendDigest;
+
 window.startResize=function(e){e.stopPropagation();e.preventDefault();const th=e.target.parentElement,table=th.closest('table');if(!table.style.tableLayout){table.style.tableLayout='fixed';table.style.width='100%';table.querySelectorAll('th').forEach(t=>{t.style.width=t.offsetWidth+'px'})}const startX=e.pageX,startW=th.offsetWidth;e.target.classList.add('resizing');function onMove(ev){th.style.width=Math.max(40,startW+(ev.pageX-startX))+'px'}function onUp(){document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);e.target.classList.remove('resizing')}document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp)};
 
 function bdg(s){const v=BC[s]||BC.Pending;return'<span class="bdg" style="background:'+v[0]+';color:'+v[1]+';border:1px solid '+v[2]+'"><span style="width:5px;height:5px;border-radius:50%;background:'+v[2]+';display:inline-block"></span>'+s+'</span>'}
@@ -452,12 +509,12 @@ function render(){
   const soTh=isAD?sth('Sign-Off','fs'):'';
   const thR=isH?'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Employee','E')+sth('Co','X')+sth('Code','C')+sth('Project','M')+sth('Sub','B')+sth('Time','T')+sth('Req','Q',1)+sth('Appr','ah',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>':'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Company','Z')+sth('Proj#','PN')+sth('Desc','J')+sth('Engineer','G')+sth('Type','W')+sth('Timeline','F')+sth('Req','Q',1)+sth('Appr','aq',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>';
   let np='';if(S.notifOpen){np='<div class="notif-panel"><div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;font-weight:700;font-size:13px;display:flex;justify-content:space-between">Notifications<button onclick="tNotif()" style="background:0;border:0;cursor:pointer;color:#aaa;font-size:16px">\u2715</button></div>';if(!allNotifs.length)np+='<div style="padding:30px;text-align:center;color:#aaa;font-size:12px">No notifications</div>';allNotifs.slice(0,30).forEach(n=>{const ic=n.action==='approve'?'\u2705':n.action==='reject'?'\u274C':n.action==='confirm'?'\uD83D\uDD12':n.action==='return'?'\u21A9':n.action==='reassign'?'\uD83D\uDD04':n.action==='remind'?'\uD83D\uDD14':'\uD83D\uDCAC';const d=new Date(n.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});np+='<div style="padding:10px 16px;border-bottom:1px solid #F3F4F6;font-size:12px">'+ic+' <b>'+n.actor+'</b> '+n.action+' #'+n.rowId+'<div style="color:#6B7280;font-size:10px;margin-top:2px">'+n.details+' \u00b7 '+ts+'</div></div>'});np+='</div>'}
-  const snBtn=sessionChanges.length?'<button class="sn-btn" onclick="doNotify()">\uD83D\uDCBE Save Changes<span class="sn-badge">'+sessionChanges.length+'</span></button>':'';
+  const snBtn='';
   const reqH=fi.reduce((s,d)=>s+d.Q,0),aprH2=fi.filter(d=>(isH?d.ah:d.aq)!=null&&d.st!=='Rejected'&&d.st!=='Disapproved').reduce((s,d)=>s+((isH?d.ah:d.aq)||0),0);
   const roleLabel=isFinal?'Final Approver':(isSenior?'Senior Approver':(isAdmin?'IDB Admin':'Approver')),roleColor=isFinal?'#8B5CF6,#6D28D9':(isSenior?'#D97706,#B45309':(isAdmin?'#F59E0B,#D97706':'#3B82F6,#6366F1'));
   let subTabs='';
   if(isSO)subTabs='<div class="subtabs"><button class="subtab '+(S.soTab==='hours'?'on':'')+'" onclick="swSoTab(\'hours\')">Hours '+(hSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+hSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='po'?'on':'')+'" onclick="swSoTab(\'po\')">Purchase Orders '+(pSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+pSO+'</span>':'')+'</button></div>';
-  if(isAD){const ahp=S.hrs.filter(d=>d.st==='Pending').length,app=S.pos.filter(d=>d.st==='Pending').length;subTabs='<div class="subtabs"><button class="subtab ad '+(S.adTab==='hours'?'on':'')+'" onclick="swAdTab(\'hours\')">Hours '+(ahp?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+ahp+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='po'?'on':'')+'" onclick="swAdTab(\'po\')">Purchase Orders '+(app?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+app+'</span>':'')+'</button></div>'}
+  if(isAD){const ahp=S.hrs.filter(d=>d.st==='Pending').length,app=S.pos.filter(d=>d.st==='Pending').length;const newSince=allNotifs.filter(n=>n.ts>(lastDigestDate||'')).length;subTabs='<div class="subtabs" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><button class="subtab ad '+(S.adTab==='hours'?'on':'')+'" onclick="swAdTab(\'hours\')">Hours '+(ahp?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+ahp+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='po'?'on':'')+'" onclick="swAdTab(\'po\')">Purchase Orders '+(app?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+app+'</span>':'')+'</button></div><div style="padding:4px 16px;display:flex;align-items:center;gap:8px">'+(lastDigestDate?'<span style="font-size:10px;color:#6B7280">Last digest: '+new Date(lastDigestDate).toLocaleDateString('en-GB')+'</span>':'')+'<button onclick="sendDigest()" style="padding:5px 14px;border-radius:6px;border:0;background:linear-gradient(135deg,#4F46E5,#6366F1);color:#fff;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px">\uD83D\uDCE7 Send Digest'+(newSince?' <span style="background:rgba(255,255,255,.3);padding:1px 6px;border-radius:8px;font-size:9px">'+newSince+'</span>':'')+'</button></div></div>'}
   const aprFilter=showApr&&aprO.length?'<div class="fg"><label>Assignee</label><select class="'+(f.apr!=='All'?'af':'')+'" onchange="setF(\'apr\',this.value)"><option value="All">All</option>'+aprO.map(o=>'<option'+(f.apr===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div>':'';
   el.innerHTML='<div class="hd"><div style="display:flex;align-items:center;gap:14px"><img src="'+LOGO_STM+'" style="height:28px;opacity:.9"><div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div><img src="'+LOGO_IDB+'" style="height:26px;border-radius:5px"><h1 style="font-size:15px">Approval Hub</h1></div><div style="display:flex;align-items:center;gap:8px">'+snBtn+'<button onclick="doRef()" style="background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:11px">\u21BB</button><div style="position:relative"><button style="position:relative;background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px" onclick="tNotif()">\uD83D\uDD14'+(allNotifs.length?'<span style="position:absolute;top:-4px;right:-4px;background:#EF4444;color:#fff;font-size:9px;font-weight:700;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center">'+Math.min(allNotifs.length,99)+'</span>':'')+'</button>'+np+'</div><div class="umenu"><div style="display:flex;align-items:center;gap:8px;padding:4px 0"><div style="text-align:right"><div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase">'+roleLabel+'</div><div style="font-size:12px;font-weight:600">'+usr+'</div></div><div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,'+roleColor+');display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+ini+'</div></div><div class="udrop"><a href="#">\uD83D\uDC64 '+usr+'</a><a href="#" onclick="doSignOut();return false">\u2715 Sign out</a></div></div></div></div>'+'<div class="tabs"><button class="tab '+(S.tab==='hours'?'on':'')+'" onclick="swTab(\'hours\')">Worked Hours '+(hPen?'<span class="tbg">'+hPen+'</span>':'')+'</button><button class="tab '+(S.tab==='po'?'on':'')+'" onclick="swTab(\'po\')">Purchase Orders '+(pPen?'<span class="tbg">'+pPen+'</span>':'')+'</button>'+(isFinal?'<button class="tab '+(S.tab==='signoff'?'on':'')+'" onclick="swTab(\'signoff\')" style="'+(isSO?'border-bottom-color:#8B5CF6':'')+'">\uD83D\uDD12 Sign-Off '+(soTotal?'<span class="tbg so">'+soTotal+'</span>':'')+'</button>':'')+(canAdmin?'<button class="tab '+(S.tab==='admin'?'on':'')+'" onclick="swTab(\'admin\')" style="'+(isAD?'border-bottom-color:#D97706':'')+'">\u2699 Admin '+(adPen?'<span class="tbg ad">'+adPen+'</span>':'')+'</button>':'')+'</div>'+subTabs+'<div class="sts" style="grid-template-columns:repeat('+stA.length+',1fr)">'+stA.map(s=>'<div class="st '+(S.sf===s.k||(s.k===null&&!S.sf)?'on':'')+'" style="--ac:'+s.a+'" onclick="cSt('+(s.k?"\'"+s.k+"\'":"null")+')"><div class="sl">'+s.l+'</div><div class="sv">'+s.v+' entries</div><div class="sa">'+eur(s.hrs*RATE)+'</div><div class="sh2">'+s.hrs.toFixed(isH?1:0)+'h</div></div>').join('')+'</div>'+pc+'<div class="fb">'+(isH?'<div class="fg"><label>Month</label><select class="'+(f.mo!=='All'?'af':'')+'" onchange="setF(\'mo\',this.value)"><option value="All">All</option>'+mO.map(m=>'<option value="'+m.v+'"'+(f.mo===m.v?' selected':'')+'>'+m.l+'</option>').join('')+'</select></div>':'')+'<div class="fg"><label>Company</label><select class="'+(f.co!=='All'?'af':'')+'" onchange="setF(\'co\',this.value)"><option value="All">All</option>'+cO.map(o=>'<option value="'+(o||'None')+'"'+(f.co===(o||'None')?' selected':'')+'>'+(o||'None')+'</option>').join('')+'</select></div><div class="fg"><label>'+(isH?'Code':'Proj#')+'</label><select class="'+(f.cd!=='All'?'af':'')+'" onchange="setF(\'cd\',this.value)"><option value="All">All</option>'+cdO.map(o=>'<option value="'+o+'"'+(f.cd===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>Project</label><select class="'+(f.pr!=='All'?'af':'')+'" onchange="setF(\'pr\',this.value)" style="max-width:160px"><option value="All">All</option>'+pO.map(o=>'<option'+(f.pr===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>'+(isH?'Subphase':'Sub')+'</label><select class="'+(f.sp!=='All'?'af':'')+'" onchange="setF(\'sp\',this.value)" style="max-width:140px"><option value="All">All</option>'+spO.map(o=>'<option value="'+o+'"'+(f.sp===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>'+(isH?'Employee':'Engineer')+'</label><select class="'+(f.em!=='All'?'af':'')+'" onchange="setF(\'em\',this.value)" style="min-width:100px"><option value="All">All</option>'+eO.map(o=>'<option'+(f.em===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>Status</label><select class="'+(es!=='All'?'af':'')+'" onchange="setF(\'st\',this.value);S.sf=null"><option value="All">All</option>'+sts.map(o=>'<option'+(es===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div>'+aprFilter+'<button onclick="tCmt()" style="padding:5px 10px;border-radius:6px;border:1px solid '+(f.cmt?'#3B82F6':'#D1D5DB')+';background:'+(f.cmt?'#DBEAFE':'#fff')+';font-size:10px;font-weight:600;cursor:pointer;color:'+(f.cmt?'#1E40AF':'#6B7280')+'">\uD83D\uDCAC Comments</button>'+(anyF?'<button onclick="resF()" style="padding:5px 8px;border-radius:6px;border:0;background:#FEE2E2;color:#991B1B;font-size:10px;font-weight:600;cursor:pointer">Reset</button>':'')+'</div>'+(selP&&!isAdmin?(isSO?'<div style="padding:6px 20px 0;display:flex;gap:6px;align-items:center;font-size:11px;color:#888">'+selP+' selected <button onclick="doBConfirm()" style="padding:5px 12px;border-radius:6px;border:0;background:#8B5CF6;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDD12 Confirm All</button></div>':'<div style="padding:6px 20px 0;display:flex;gap:6px;align-items:center;font-size:11px;color:#888">'+selP+' selected <button onclick="doB()" style="padding:5px 12px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">Approve All</button></div>'):'')+'<div style="padding:10px 20px 20px"><div style="background:#fff;border-radius:10px;border:1px solid #E5E7EB;overflow:hidden"><div style="overflow-x:auto"><table><thead><tr>'+thR+'</tr></thead><tbody>'+rows+'</tbody></table></div><div style="padding:12px 16px;border-top:2px solid #E5E7EB;background:#F9FAFB;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:#6B7280">'+fi.length+' of '+md.length+'</span><div style="display:flex;gap:20px"><div style="text-align:right"><div style="font-size:9px;color:#6B7280;text-transform:uppercase;font-weight:600">Requested</div><div style="font-weight:800;font-family:monospace;color:#111">'+reqH.toFixed(isH?2:0)+'h \u00b7 <span style="color:#F59E0B">'+eur(reqH*RATE)+'</span></div></div><div style="text-align:right"><div style="font-size:9px;color:#059669;text-transform:uppercase;font-weight:600">Approved</div><div style="font-weight:800;font-family:monospace;color:#059669">'+aprH2.toFixed(isH?2:0)+'h \u00b7 '+eur(aprH2*RATE)+'</div></div></div></div></div></div>'+'<div id="ov" class="ov '+(S.det?'open':'')+'" onclick="cDet()"><div class="sb" onclick="event.stopPropagation()"><div style="padding:20px 22px" id="sbc"></div></div></div>';
   if(S.det)renderSB();
