@@ -178,29 +178,27 @@ async function writeNotif(action,rowId,tab,details){
 // Send email
 async function sendNotifyEmail(){
   if(!sessionChanges.length){toast('No changes','er');return}
-  const ap=sessionChanges.filter(c=>c.type==='approve'),rj=sessionChanges.filter(c=>c.type==='reject'),cm=sessionChanges.filter(c=>c.type==='comment'),cf=sessionChanges.filter(c=>c.type==='confirm'),rt=sessionChanges.filter(c=>c.type==='return'),ra=sessionChanges.filter(c=>c.type==='reassign'),rm=sessionChanges.filter(c=>c.type==='remind');
-  let body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 Activity Summary</h2><p><b>By:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+'</p><hr>';
-  if(ap.length){const th=ap.reduce((s,c)=>s+(c.hours||0),0);body+='<h3 style="color:#059669">\u2705 Approved: '+ap.length+' ('+th.toFixed(1)+'h / \u20AC'+(th*RATE).toFixed(0)+')</h3><ul>';ap.forEach(c=>body+='<li>#'+c.id+' \u2014 '+c.status+' '+(c.hours||0).toFixed(1)+'h</li>');body+='</ul>'}
-  if(rj.length){body+='<h3 style="color:#DC2626">\u274C Rejected: '+rj.length+'</h3><ul>';rj.forEach(c=>body+='<li>#'+c.id+(c.comment?' \u2014 '+c.comment:'')+'</li>');body+='</ul>'}
-  if(cf.length){body+='<h3 style="color:#8B5CF6">\uD83D\uDD12 Confirmed: '+cf.length+'</h3><ul>';cf.forEach(c=>body+='<li>#'+c.id+'</li>');body+='</ul>'}
-  if(rt.length){body+='<h3 style="color:#F59E0B">\u21A9 Returned: '+rt.length+'</h3><ul>';rt.forEach(c=>body+='<li>#'+c.id+'</li>');body+='</ul>'}
-  if(ra.length){body+='<h3 style="color:#D97706">\uD83D\uDD04 Reassigned: '+ra.length+'</h3><ul>';ra.forEach(c=>body+='<li>#'+c.id+' \u2192 '+c.newAssignee+'</li>');body+='</ul>'}
-  if(rm.length){body+='<h3 style="color:#6366F1">\uD83D\uDD14 Reminders: '+rm.length+'</h3><ul>';rm.forEach(c=>body+='<li>#'+c.id+' \u2192 '+c.approver+'</li>');body+='</ul>'}
-  if(cm.length){body+='<h3 style="color:#3B82F6">\uD83D\uDCAC Comments: '+cm.length+'</h3><ul>';cm.forEach(c=>body+='<li>#'+c.id+': '+c.text+'</li>');body+='</ul>'}
-  body+='<hr><p><a href="'+C.redirect+'">Open IDB Approval Hub</a></p>';
-  // Collect unique recipients
-  const recipSet=new Set();
-  recipSet.add('mt@idb.sk');recipSet.add('vy@idb.sk');
-  ra.forEach(c=>{if(c.newEmail)recipSet.add(c.newEmail)});
-  rm.forEach(c=>{if(c.approverEmail)recipSet.add(c.approverEmail)});
-  recipSet.delete(usrMail);
-  const recip=[...recipSet].map(e=>({emailAddress:{address:e}}));
-  if(!recip.length){toast('No recipients','er');return}
+  const rm=sessionChanges.filter(c=>c.type==='remind');
   try{
-    await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 '+usr+' activity',body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});
+    // Log all changes to Notifications sheet (Power Automate reads this weekly)
     for(const c of sessionChanges)await writeNotif(c.type,c.id,c.tab||S.tab,c.status||c.text||c.newAssignee||'');
-    const cnt=sessionChanges.length;sessionChanges=[];toast('Sent '+cnt+' items','ok');render()
-  }catch(e){toast('Email failed: '+e.message,'er');console.error(e)}
+    // Only send direct email for Remind actions (urgent, targeted)
+    if(rm.length){
+      for(const r of rm){
+        const approver=r.approver||'Approver';
+        const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 Task Reminder</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+'</p><hr><p>You have a pending task <b>#'+r.id+'</b> awaiting your approval.</p><p>Please review it at your earliest convenience.</p><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub</a></p>';
+        const recipSet=new Set();
+        if(r.approverEmail)recipSet.add(r.approverEmail);
+        else{const match=ASSIGNEES.find(a=>a===approver);if(match){/* email lookup needed */}}
+        recipSet.add('mt@idb.sk');recipSet.add('vy@idb.sk');
+        recipSet.delete(usrMail);
+        const recip=[...recipSet].map(e=>({emailAddress:{address:e}}));
+        if(recip.length){try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Reminder: Task #'+r.id,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false})}catch(e){console.error('Remind email failed:',e)}}
+      }
+    }
+    const cnt=sessionChanges.length;sessionChanges=[];
+    toast('Logged '+cnt+' changes'+(rm.length?' + sent '+rm.length+' reminder(s)':''),'ok');render()
+  }catch(e){toast('Failed: '+e.message,'er');console.error(e)}
 }
 
 // STATE
@@ -334,7 +332,21 @@ function fO(k){
 let cmtItem=null;
 function openCmt(id){const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;cmtItem=it;S.det=null;renderCmtSB();document.getElementById('cmtov').className='ov open';document.getElementById('cmtsb').style.display='flex';render()}
 function closeCmt(){cmtItem=null;document.getElementById('cmtov').className='ov';document.getElementById('cmtsb').style.display='none'}
-async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';try{await addComment(cmtItem.I,cmtItem.id.startsWith('H')?'hours':'po',text);renderCmtSB();render();toast('Comment saved','ok')}catch(e){toast('Failed','er')}}
+async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';try{await addComment(cmtItem.I,cmtItem.id.startsWith('H')?'hours':'po',text);renderCmtSB();render();toast('Comment saved','ok');
+  // If IDB Admin comments, send real-time email to assigned approver
+  if(isAdmin){
+    const it=cmtItem,isH=it.id.startsWith('H');
+    const approver=isH?it.AF:it.OB;
+    const itemDesc=isH?'Hours #'+it.I+' \u2014 '+it.E+' ('+it.D+')':'PO-'+it.I+' \u2014 '+(it.J||it.Z);
+    const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 New Comment</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+' '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})+'</p><hr><p><b>Task:</b> '+itemDesc+'</p><p><b>Assigned to:</b> '+approver+'</p><div style="background:#F3F4F6;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px">\uD83D\uDCAC '+text.replace(/</g,'&lt;')+'</div><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub to reply</a></p>';
+    // Find approver email - check ASSIGNEE_EMAILS mapping
+    const emailMap={"Rene Bos":"rb@staalmeesters.com","Rob Bos":"rob@staalmeesters.com","Floris uit het Broek":"fub@staalmeesters.com","Ashkan Karamroudi":"ak@staalmeesters.com"};
+    const approverEmail=emailMap[approver];
+    const recip=[];
+    if(approverEmail&&approverEmail!==usrMail)recip.push({emailAddress:{address:approverEmail}});
+    if(recip.length){try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Comment on '+itemDesc,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});toast('Comment sent to '+approver,'ok')}catch(e){console.error('Comment email failed:',e)}}
+  }
+}catch(e){toast('Failed','er')}}
 function renderCmtSB(){const el=document.getElementById('cmtsb'),it=cmtItem;if(!it){el.style.display='none';return}const cmts=getComments(it.I),isH=it.id.startsWith('H');let h='<div style="padding:16px 18px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;flex-shrink:0"><div><div style="font-size:14px;font-weight:700">\uD83D\uDCAC Comments</div><div style="font-size:11px;color:#6B7280">'+(isH?'#'+it.I+' \u2014 '+it.E:'PO-'+it.I+' \u2014 '+(it.J||it.Z))+'</div></div><button onclick="closeCmt()" style="background:0;border:0;font-size:18px;cursor:pointer;color:#aaa">\u2715</button></div><div style="flex:1;overflow-y:auto;padding:16px 18px">';if(!cmts.length)h+='<div style="text-align:center;padding:40px 0;color:#aaa;font-size:13px">No comments yet</div>';cmts.forEach(c=>{const mine=c.email===usrMail;const d=new Date(c.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});h+='<div class="cmtbub '+(mine?'me':'them')+'"><div style="font-size:10px;color:#6B7280;margin-bottom:3px"><b>'+c.author+'</b> \u00b7 '+ts+'</div>'+c.text.replace(/</g,'&lt;')+'</div>'});h+='</div><div style="padding:12px 18px;border-top:1px solid #E5E7EB;flex-shrink:0;display:flex;gap:8px"><textarea id="cmtInput" placeholder="Write a comment..." style="flex:1;padding:8px 10px;border:1px solid #D1D5DB;border-radius:8px;font-size:12px;font-family:inherit;resize:none;min-height:38px;box-sizing:border-box"></textarea><button onclick="submitCmt()" style="padding:8px 16px;background:#4F46E5;color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Send</button></div>';el.innerHTML=h}
 
 // Reassign modal
@@ -440,7 +452,7 @@ function render(){
   const soTh=isAD?sth('Sign-Off','fs'):'';
   const thR=isH?'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Employee','E')+sth('Co','X')+sth('Code','C')+sth('Project','M')+sth('Sub','B')+sth('Time','T')+sth('Req','Q',1)+sth('Appr','ah',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>':'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Company','Z')+sth('Proj#','PN')+sth('Desc','J')+sth('Engineer','G')+sth('Type','W')+sth('Timeline','F')+sth('Req','Q',1)+sth('Appr','aq',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>';
   let np='';if(S.notifOpen){np='<div class="notif-panel"><div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;font-weight:700;font-size:13px;display:flex;justify-content:space-between">Notifications<button onclick="tNotif()" style="background:0;border:0;cursor:pointer;color:#aaa;font-size:16px">\u2715</button></div>';if(!allNotifs.length)np+='<div style="padding:30px;text-align:center;color:#aaa;font-size:12px">No notifications</div>';allNotifs.slice(0,30).forEach(n=>{const ic=n.action==='approve'?'\u2705':n.action==='reject'?'\u274C':n.action==='confirm'?'\uD83D\uDD12':n.action==='return'?'\u21A9':n.action==='reassign'?'\uD83D\uDD04':n.action==='remind'?'\uD83D\uDD14':'\uD83D\uDCAC';const d=new Date(n.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});np+='<div style="padding:10px 16px;border-bottom:1px solid #F3F4F6;font-size:12px">'+ic+' <b>'+n.actor+'</b> '+n.action+' #'+n.rowId+'<div style="color:#6B7280;font-size:10px;margin-top:2px">'+n.details+' \u00b7 '+ts+'</div></div>'});np+='</div>'}
-  const snBtn=sessionChanges.length?'<button class="sn-btn" onclick="doNotify()">\uD83D\uDCE7 Submit & Notify<span class="sn-badge">'+sessionChanges.length+'</span></button>':'';
+  const snBtn=sessionChanges.length?'<button class="sn-btn" onclick="doNotify()">\uD83D\uDCBE Save Changes<span class="sn-badge">'+sessionChanges.length+'</span></button>':'';
   const reqH=fi.reduce((s,d)=>s+d.Q,0),aprH2=fi.filter(d=>(isH?d.ah:d.aq)!=null&&d.st!=='Rejected'&&d.st!=='Disapproved').reduce((s,d)=>s+((isH?d.ah:d.aq)||0),0);
   const roleLabel=isFinal?'Final Approver':(isSenior?'Senior Approver':(isAdmin?'IDB Admin':'Approver')),roleColor=isFinal?'#8B5CF6,#6D28D9':(isSenior?'#D97706,#B45309':(isAdmin?'#F59E0B,#D97706':'#3B82F6,#6366F1'));
   let subTabs='';
