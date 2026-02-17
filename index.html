@@ -122,7 +122,7 @@ const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read','Mail.Send'];
 let tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid;
 let isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
 
-let allComments=[],allNotifs=[];
+let allComments=[],allNotifs=[],sessionChanges=[];
 
 async function login(){try{await msalApp.loginRedirect({scopes:sc})}catch(e){console.error(e)}}
 async function getTk(){const a=msalApp.getAllAccounts();if(!a.length)return null;try{const r=await msalApp.acquireTokenSilent({scopes:sc,account:a[0]});tk=r.accessToken;usr=a[0].name||a[0].username;usrMail=(a[0].username||'').toLowerCase();isAdmin=ADMINS.includes(usrMail);isFinal=usrMail===FINAL_APPROVER;isSenior=SENIORS.includes(usrMail);canAdmin=isFinal||isSenior;return tk}catch(e){await msalApp.acquireTokenRedirect({scopes:sc});return null}}
@@ -131,12 +131,12 @@ async function gPatch(u,b){const r=await fetch('https://graph.microsoft.com/v1.0
 async function gPost(u,b){const r=await fetch('https://graph.microsoft.com/v1.0'+u,{method:'POST',headers:{Authorization:'Bearer '+tk,'Content-Type':'application/json'},body:JSON.stringify(b)});if(!r.ok){const t=await r.text();throw new Error('Post '+r.status+' '+t)}if(r.status===202||r.status===204)return{};const txt=await r.text();if(!txt)return{};try{return JSON.parse(txt)}catch(e){return{}}}
 async function findSite(){if(driveId)return;const s=await gGet('/sites/'+C.siteHost+':'+C.sitePath);siteId=s.id;const d=await gGet('/sites/'+siteId+'/drive');driveId=d.id}
 async function findFile(n){try{return(await gGet('/drives/'+driveId+'/root:/'+encodeURIComponent(n))).id}catch(e){const s=await gGet('/drives/'+driveId+"/root/search(q='"+encodeURIComponent(n)+"')");const m=s.value.find(f=>f.name===n);if(m)return m.id;throw new Error('Not found: '+n)}}
-async function readXL(fid,sh){try{return await gGet('/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/usedRange")}catch(e){const ws=await gGet('/drives/'+driveId+'/items/'+fid+'/workbook/worksheets');if(ws.value&&ws.value.length)return gGet('/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(ws.value[0].name)+"')/usedRange");throw e}}
+async function readXL(fid,sh,rng){const path='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/"+(rng?"range(address='"+rng+"')?$select=values":"usedRange?$select=values");try{return await gGet(path)}catch(e){throw e}}
 async function writeR(fid,sh,addr,vals){const url='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/range(address='"+addr+"')";try{await gPatch(url,{values:[vals]})}catch(e){console.warn('writeR retry',addr,e.message);await getTk();await gPatch(url,{values:[vals]})}}
 
 // Sheets helper - create if missing
 async function ensureSheet(fid,name,headers){
-  try{await gGet('/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+name+"')/usedRange");return}
+  try{await gGet('/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+name+"')");return}
   catch(e){await gPost('/drives/'+driveId+'/items/'+fid+'/workbook/worksheets',{name:name});const addr='A1:'+String.fromCharCode(64+headers.length)+'1';await gPatch('/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+name+"')/range(address='"+addr+"')",{values:[headers]})}
 }
 async function readSheet(fid,name){
@@ -210,7 +210,7 @@ async function loadData(){
     await findSite();
     const [hf,pf]=hFid&&pFid?[hFid,pFid]:await Promise.all([findFile(C.hFile),findFile(C.pFile)]);
     hFid=hf;pFid=pf;
-    const [hd,pd]=await Promise.all([readXL(hFid,C.hSheet),readXL(pFid,C.pSheet)]);
+    const [hd,pd]=await Promise.all([readXL(hFid,C.hSheet),readXL(pFid,C.pSheet,'A1:AA500')]);
     S.hrs=hd.values.slice(1).map((r,i)=>({_row:i+2,_r:r})).filter(x=>x._r[0]).map(x=>{const r=x._r;
       const wVal=r[22]||'';const oldLayout=(wVal==='Confirmed'||wVal==='Returned');
       const rawFs=oldLayout?wVal:(r[23]||'');const validFs=(rawFs==='Confirmed'||rawFs==='Returned')?rawFs:'';
@@ -233,14 +233,14 @@ async function loadData(){
       fs:r[24]||'',fsb:r[25]||'',fd:r[26]||'',
       rsa:r[27]||''
     }});
-    await Promise.all([initSheets(),loadComments(),loadNotifs(),loadDigestDate()]);
+    S.phase='app';render();
+    // Load extras in background (non-blocking)
+    Promise.all([initSheets(),loadComments(),loadNotifs(),loadDigestDate()]).then(()=>render()).catch(e=>console.warn('extras',e));
     // Migrate old FinalStatus W→X lazily in background (read already handles both)
     const oldRows=S.hrs.filter(d=>d._old);
     if(oldRows.length){console.log('Migrating '+oldRows.length+' rows in background');
       (async()=>{for(const d of oldRows){try{await writeR(hFid,C.hSheet,'X'+d.row+':Z'+d.row,[d.fs,d.fsb,d.fd]);await writeR(hFid,C.hSheet,'W'+d.row,['']);d._old=false}catch(e){console.error('Migrate row',d.row,e)}}console.log('Migration done')})()}
-    S.phase='app';
-  }catch(e){S.err=e.message;S.phase='error';console.error(e)}
-  render();
+  }catch(e){S.err=e.message;S.phase='error';console.error(e);render()}
 }
 
 // ACTIONS
