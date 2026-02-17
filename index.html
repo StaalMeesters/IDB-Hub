@@ -244,20 +244,21 @@ async function loadData(){
 }
 
 // ACTIONS
-async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'approve',id:it.I,tab:'hours',status:st,hours:h});toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apH fail',it.I,e)}}
-async function rjH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'reject',id:it.I,tab:'hours',comment:c});toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjH fail',it.I,e)}}
-async function apP(it,q,c){const a=Math.abs(q-it.Q)>.5,st=a?'Adjusted':'Approved',nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,[st,q,c,usr])]);it.st=st;it.aq=q;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'approve',id:it.I,tab:'po',status:st});toast('PO '+st,'ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apP fail',it.I,e)}}
-async function rjP(it,c){const nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Disapproved',0,c||'Disapproved',usr])]);it.st='Disapproved';it.aq=0;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'reject',id:it.I,tab:'po',comment:c});toast('Disapproved','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjP fail',it.I,e)}}
-async function confirmH(it){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;sessionChanges.push({type:'confirm',id:it.I,tab:'hours'});toast('Confirmed #'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmH fail',it.I,e)}}
-async function returnH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Returned',usr,nw]);await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';sessionChanges.push({type:'return',id:it.I,tab:'hours'});toast('Returned #'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnH fail',it.I,e)}}
-async function confirmP(it){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;sessionChanges.push({type:'confirm',id:it.I,tab:'po'});toast('PO Confirmed','ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmP fail',it.I,e)}}
-async function returnP(it,c){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Returned',usr,nw]);await writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Pending','','','']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.aq=null;it.sb='';sessionChanges.push({type:'return',id:it.I,tab:'po'});toast('PO Returned','ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnP fail',it.I,e)}}
+async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'approve',id:it.I,tab:'hours',status:st,hours:h});writeNotif('approve',it.I,'hours',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apH fail',it.I,e)}}
+async function rjH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'reject',id:it.I,tab:'hours',comment:c});writeNotif('reject',it.I,'hours',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjH fail',it.I,e)}}
+async function apP(it,q,c){const a=Math.abs(q-it.Q)>.5,st=a?'Adjusted':'Approved',nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,[st,q,c,usr])]);it.st=st;it.aq=q;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'approve',id:it.I,tab:'po',status:st});writeNotif('approve',it.I,'po',st+' qty '+q+(c?' — '+c:''));toast('PO '+st,'ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apP fail',it.I,e)}}
+async function rjP(it,c){const nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Disapproved',0,c||'Disapproved',usr])]);it.st='Disapproved';it.aq=0;it.cm=c;it.sb=usr;it.ad=nw;sessionChanges.push({type:'reject',id:it.I,tab:'po',comment:c});writeNotif('reject',it.I,'po',c||'Disapproved');toast('Disapproved','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjP fail',it.I,e)}}
+async function confirmH(it){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;sessionChanges.push({type:'confirm',id:it.I,tab:'hours'});writeNotif('confirm',it.I,'hours','Confirmed');toast('Confirmed #'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmH fail',it.I,e)}}
+async function returnH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Returned',usr,nw]);await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';sessionChanges.push({type:'return',id:it.I,tab:'hours'});writeNotif('return',it.I,'hours','Returned to approver');toast('Returned #'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnH fail',it.I,e)}}
+async function confirmP(it){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;sessionChanges.push({type:'confirm',id:it.I,tab:'po'});writeNotif('confirm',it.I,'po','Confirmed');toast('PO Confirmed','ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmP fail',it.I,e)}}
+async function returnP(it,c){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Returned',usr,nw]);await writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Pending','','','']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.aq=null;it.sb='';sessionChanges.push({type:'return',id:it.I,tab:'po'});writeNotif('return',it.I,'po','Returned to approver');toast('PO Returned','ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnP fail',it.I,e)}}
 
 // Reassign
 async function reassign(it,newName){
   const isH=it.id.startsWith('H');const oldAF=isH?it.AF:it.OB;
   if(isH){it.AF=newName;await writeR(hFid,C.hSheet,'P'+it.row,[newName])}
   else{it.OB=newName;await writeR(pFid,C.pSheet,'R'+it.row,[newName])}
+  writeNotif('reassign',it.I,isH?'hours':'po','From '+oldAF+' to '+newName);
   toast('Reassigned to '+newName,'ok');render();
 }
 
@@ -266,6 +267,7 @@ async function remindApprover(it){
   const isH=it.id.startsWith('H');const approver=isH?it.AF:it.OB;const nw=nowISO();
   if(isH){it.rsa=nw;await writeR(hFid,C.hSheet,'AA'+it.row,[nw])}
   else{it.rsa=nw;await writeR(pFid,C.pSheet,'AB'+it.row,[nw])}
+  writeNotif('remind',it.I,isH?'hours':'po','Reminder sent to '+approver);
   toast('Reminder queued for '+approver,'ok');render();
 }
 
@@ -329,10 +331,10 @@ function fO(k){
 var cmtItem=null;
 function openCmt(id){const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;cmtItem=it;S.det=null;renderCmtSB();document.getElementById('cmtov').className='ov open';document.getElementById('cmtsb').style.display='flex';render()}
 function closeCmt(){cmtItem=null;document.getElementById('cmtov').className='ov';document.getElementById('cmtsb').style.display='none'}
-async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';try{await addComment(cmtItem.I,cmtItem.id.startsWith('H')?'hours':'po',text);renderCmtSB();render();toast('Comment saved','ok');
+async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';const isH=cmtItem.id.startsWith('H');try{await addComment(cmtItem.I,isH?'hours':'po',text);writeNotif('comment',cmtItem.I,isH?'hours':'po',text.substring(0,80));renderCmtSB();render();toast('Comment saved','ok');
   // If IDB Admin comments, send real-time email to assigned approver
   if(isAdmin){
-    const it=cmtItem,isH=it.id.startsWith('H');
+    const it=cmtItem;
     const approver=isH?it.AF:it.OB;
     const itemDesc=isH?'Hours #'+it.I+' \u2014 '+it.E+' ('+it.D+')':'PO-'+it.I+' \u2014 '+(it.J||it.Z);
     const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 New Comment</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+' '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})+'</p><hr><p><b>Task:</b> '+itemDesc+'</p><p><b>Assigned to:</b> '+approver+'</p><div style="background:#F3F4F6;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px">\uD83D\uDCAC '+text.replace(/</g,'&lt;')+'</div><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub to reply</a></p>';
