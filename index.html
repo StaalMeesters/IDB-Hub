@@ -239,7 +239,7 @@ async function loadData(){
     // Migrate old FinalStatus W→X lazily in background (read already handles both)
     const oldRows=S.hrs.filter(d=>d._old);
     if(oldRows.length){console.log('Migrating '+oldRows.length+' rows in background');
-      (async()=>{for(const d of oldRows){try{await writeR(hFid,C.hSheet,'X'+d.row+':Z'+d.row,[d.fs,d.fsb,d.fd]);await writeR(hFid,C.hSheet,'W'+d.row,['']);d._old=false}catch(e){console.error('Migrate row',d.row,e)}}console.log('Migration done')})()}
+      (async()=>{for(const d of oldRows){try{await writeR(hFid,C.hSheet,'X'+d.row+':Z'+d.row,[d.fs,d.fsb,d.fd]);d._old=false}catch(e){console.error('Migrate row',d.row,e)}}console.log('Migration done')})()}
   }catch(e){S.err=e.message;S.phase='error';console.error(e);render()}
 }
 
