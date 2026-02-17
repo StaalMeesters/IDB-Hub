@@ -113,16 +113,16 @@ const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec
 const BC={Pending:['#FEF3C7','#92400E','#F59E0B'],Approved:['#D1FAE5','#065F46','#10B981'],Rejected:['#FEE2E2','#991B1B','#EF4444'],Adjusted:['#DBEAFE','#1E40AF','#3B82F6'],Disapproved:['#FEE2E2','#991B1B','#EF4444'],Confirmed:['#D1FAE5','#065F46','#059669'],Returned:['#FEF3C7','#92400E','#F59E0B']};
 const PC={ST:['#DBEAFE','#1E40AF'],STP:['#E0E7FF','#3730A3'],STPR:['#FCE7F3','#9D174D']};
 const APRCOLS=['#3B82F6','#8B5CF6','#EC4899','#F59E0B','#10B981','#EF4444','#6366F1','#14B8A6','#F97316'];
-let aprColMap={};
+var aprColMap={};
 function aprCol(n){if(!n)return'#6B7280';if(!aprColMap[n]){const i=Object.keys(aprColMap).length;aprColMap[n]=APRCOLS[i%APRCOLS.length]}return aprColMap[n]}
 
 const mc={auth:{clientId:C.clientId,authority:'https://login.microsoftonline.com/'+C.tenantId,redirectUri:C.redirect},cache:{cacheLocation:'localStorage'}};
 const msalApp=new msal.PublicClientApplication(mc);
 const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read','Mail.Send'];
-let tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid;
-let isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
+var tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid;
+var isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
 
-let allComments=[],allNotifs=[],sessionChanges=[];
+var allComments=[],allNotifs=[],sessionChanges=[];
 
 async function login(){try{await msalApp.loginRedirect({scopes:sc})}catch(e){console.error(e)}}
 async function getTk(){const a=msalApp.getAllAccounts();if(!a.length)return null;try{const r=await msalApp.acquireTokenSilent({scopes:sc,account:a[0]});tk=r.accessToken;usr=a[0].name||a[0].username;usrMail=(a[0].username||'').toLowerCase();isAdmin=ADMINS.includes(usrMail);isFinal=usrMail===FINAL_APPROVER;isSenior=SENIORS.includes(usrMail);canAdmin=isFinal||isSenior;return tk}catch(e){await msalApp.acquireTokenRedirect({scopes:sc});return null}}
@@ -148,7 +148,7 @@ async function appendSheet(fid,name,vals){
 }
 
 // Comments - both files
-let sheetsOk=false;
+var sheetsOk=false;
 async function initSheets(){
   if(sheetsOk)return;
   const ch=['RowID','Tab','Author','AuthorEmail','Timestamp','Text'];
@@ -195,7 +195,7 @@ async function sendRemindEmail(it){
 }
 
 // STATE
-let S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:'All',sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false};
+var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:'All',sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false};
 
 function toast(m,t){const e=document.getElementById('toast');e.textContent=m;e.className='toast show';e.style.background=t==='ok'?'#059669':'#DC2626';setTimeout(()=>e.className='toast',3000)}
 function fmt(v){if(!v)return'';if(typeof v==='object'&&v.toISOString)return v.toISOString().substring(0,10);const s=String(v);if(s.match(/^\d{4}-\d{2}/))return s.substring(0,10);const n=parseFloat(v);if(!isNaN(n)&&n>30000&&n<100000){const d=new Date((n-25569)*86400000);return d.toISOString().substring(0,10)}return s.substring(0,10)}
@@ -326,7 +326,7 @@ function fO(k){
 }
 
 // Comment sidebar
-let cmtItem=null;
+var cmtItem=null;
 function openCmt(id){const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;cmtItem=it;S.det=null;renderCmtSB();document.getElementById('cmtov').className='ov open';document.getElementById('cmtsb').style.display='flex';render()}
 function closeCmt(){cmtItem=null;document.getElementById('cmtov').className='ov';document.getElementById('cmtsb').style.display='none'}
 async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';try{await addComment(cmtItem.I,cmtItem.id.startsWith('H')?'hours':'po',text);renderCmtSB();render();toast('Comment saved','ok');
@@ -394,7 +394,7 @@ window.tNotif=()=>{S.notifOpen=!S.notifOpen;render()};
 
 // Column resize
 // WEEKLY DIGEST
-let lastDigestDate=null;
+var lastDigestDate=null;
 async function loadDigestDate(){
   try{
     const rows=await readSheet(hFid,'DigestLog');
