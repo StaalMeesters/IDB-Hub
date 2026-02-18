@@ -376,8 +376,8 @@ window.oDet=id=>{closeCmt();const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!
 window.cDet=()=>{S.det=null;render()};
 window.openCmt=openCmt;
 window.oEdit=id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;it.st='Pending';it.ah=null;it.aq=null;it.sb='';S.det=it;S.adj=it.Q;S.cmt='';S.sf=null;render()};
-window.qA=id=>{oDet(id)};
-window.qR=id=>{oDet(id)};
+window.qA=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await apH(it,it.Q,'');else await apP(it,it.Q,'')}catch(e){toast('Error','er')}};
+window.qR=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await rjH(it,'');else await rjP(it,'')}catch(e){toast('Error','er')}};
 window.doA=async()=>{const d=S.det,c=document.getElementById('dcm')?.value||'';try{if(d.id.startsWith('H'))await apH(d,S.adj,c);else await apP(d,S.adj,c);cDet()}catch(e){toast('Error','er')}};
 window.doR=async()=>{const d=S.det,c=document.getElementById('dcm')?.value||'';try{if(d.id.startsWith('H'))await rjH(d,c);else await rjP(d,c);cDet()}catch(e){toast('Error','er')}};
 window.doConfirm=async id=>{const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await confirmH(it);else await confirmP(it)}catch(e){toast('Error','er')}};
