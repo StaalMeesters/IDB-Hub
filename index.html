@@ -702,31 +702,27 @@ function render(){
       } else {
         projBars+='<div style="padding:0 20px 18px;display:grid;gap:0">';
         projs.forEach((p,pi)=>{
-          const pct=maxH>0?p.hours/maxH*100:0;
           const subs=Object.values(p.subs).sort((a,b)=>b.hours-a.hours);
-          if(pi>0)projBars+='<div style="height:1px;background:rgba(255,255,255,.08);margin:14px 0"></div>';
+          const subMax=Math.max(...subs.map(s=>s.hours));
+          if(pi>0)projBars+='<div style="height:1px;background:rgba(255,255,255,.08);margin:16px 0"></div>';
           projBars+='<div>';
-          projBars+='<div style="display:flex;justify-content:space-between;margin-bottom:5px;cursor:pointer" onclick="event.stopPropagation();setF(\'cd\',\''+p.code+'\')"><span style="font-size:13px;font-weight:700">'+p.code+' <span style="font-weight:400;color:rgba(255,255,255,.4);font-size:11px">'+p.name+'</span></span><span style="font-size:11px"><span style="color:#34D399;font-weight:700">'+p.approved.toFixed(1)+'h</span> <span style="color:rgba(255,255,255,.2)">/</span> <span style="color:#60A5FA;font-weight:600">'+p.hours.toFixed(1)+'h</span>'+(p.pending>0?' <span style="color:rgba(255,255,255,.2)">\u00b7</span> <span style="color:#F59E0B;font-size:10px">'+p.pending.toFixed(1)+'h pending</span>':'')+(p.rejected>0?' <span style="color:rgba(255,255,255,.2)">\u00b7</span> <span style="color:#EF4444;font-size:10px">'+p.rejected.toFixed(1)+'h rejected</span>':'')+'</span></div>';
-          projBars+='<div style="height:12px;background:rgba(255,255,255,.05);border-radius:6px;overflow:hidden;display:flex;margin-bottom:2px">';
+          projBars+='<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;cursor:pointer" onclick="event.stopPropagation();setF(\'cd\',\''+p.code+'\')"><span style="font-size:14px;font-weight:700">'+p.code+' <span style="font-weight:400;color:rgba(255,255,255,.35);font-size:11px">'+p.name+'</span></span><span style="font-size:11px"><span style="color:#34D399;font-weight:700">'+p.approved.toFixed(1)+'h</span> <span style="color:rgba(255,255,255,.15)">/</span> <span style="color:#60A5FA;font-weight:600">'+p.hours.toFixed(1)+'h</span>'+(p.pending>0?' <span style="color:#F59E0B;font-size:10px">'+p.pending.toFixed(1)+'h pending</span>':'')+(p.rejected>0?' <span style="color:#EF4444;font-size:10px">'+p.rejected.toFixed(1)+'h rejected</span>':'')+'</span></div>';
           subs.forEach((s,si)=>{
             const sc=PCOLS[si%PCOLS.length];
-            const sw=p.hours>0?s.hours/p.hours*100:0;
-            const apc=s.hours>0?s.approved/s.hours*100:0;
-            const ppc=s.hours>0?s.pending/s.hours*100:0;
-            const rpc=s.hours>0?s.rejected/s.hours*100:0;
-            projBars+='<div style="width:'+sw+'%;height:100%;position:relative;overflow:hidden" title="'+s.label+': '+s.hours.toFixed(1)+'h">';
-            if(s.approved>0)projBars+='<div style="position:absolute;left:0;top:0;height:100%;width:'+apc+'%;background:'+sc+'"></div>';
-            if(s.pending>0)projBars+='<div style="position:absolute;left:'+apc+'%;top:0;height:100%;width:'+ppc+'%;background:'+sc+';opacity:.3"></div>';
-            if(s.rejected>0)projBars+='<div style="position:absolute;left:'+(apc+ppc)+'%;top:0;height:100%;width:'+rpc+'%;background:#EF4444;opacity:.4"></div>';
+            const bw=subMax>0?s.hours/subMax*100:0;
+            const apc=s.hours>0?s.approved/s.hours:0;
+            const ppc=s.hours>0?s.pending/s.hours:0;
+            const rpc=s.hours>0?s.rejected/s.hours:0;
+            projBars+='<div style="margin-bottom:6px">';
+            projBars+='<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="font-size:11px;font-weight:600;color:rgba(255,255,255,.7)">'+s.label+(s.code!==s.label&&s.code!=='--'?' <span style="color:rgba(255,255,255,.25);font-size:9px;font-weight:400">'+s.code+'</span>':'')+'</span><span style="font-size:10px;color:rgba(255,255,255,.4)">'+s.count+' \u00b7 '+s.hours.toFixed(1)+'h \u00b7 '+eur(s.hours*curRate)+'</span></div>';
+            projBars+='<div style="height:8px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden;width:'+bw+'%">';
+            projBars+='<div style="height:100%;display:flex">';
+            if(s.approved>0)projBars+='<div style="width:'+(apc*100)+'%;height:100%;background:'+sc+'"></div>';
+            if(s.pending>0)projBars+='<div style="width:'+(ppc*100)+'%;height:100%;background:'+sc+';opacity:.3"></div>';
+            if(s.rejected>0)projBars+='<div style="width:'+(rpc*100)+'%;height:100%;background:#EF4444;opacity:.4"></div>';
+            projBars+='</div></div>';
             projBars+='</div>';
           });
-          projBars+='</div>';
-          projBars+='<div style="display:flex;gap:8px;flex-wrap:wrap;padding-left:2px">';
-          subs.forEach((s,si)=>{
-            const sc=PCOLS[si%PCOLS.length];
-            projBars+='<span style="font-size:10px;display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:2px;background:'+sc+';display:inline-block"></span><span style="color:rgba(255,255,255,.55)">'+s.label+'</span> <span style="color:rgba(255,255,255,.35)">'+s.hours.toFixed(1)+'h</span>'+(s.approved>0?' <span style="color:#34D399;font-size:9px">\u2713'+s.approved.toFixed(1)+'</span>':'')+(s.pending>0?' <span style="color:rgba(255,255,255,.25);font-size:9px">\u23F3'+s.pending.toFixed(1)+'</span>':'')+(s.rejected>0?' <span style="color:#EF4444;font-size:9px;opacity:.6">\u2717'+s.rejected.toFixed(1)+'</span>':'')+'</span>';
-          });
-          projBars+='</div>';
           projBars+='</div>';
         });
         projBars+='</div>';
