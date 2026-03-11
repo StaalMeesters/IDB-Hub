@@ -54,6 +54,7 @@ tr{border-bottom:1px solid #F3F4F6}tr:nth-child(even){background:#FAFAFA}
 .ldr{display:flex;align-items:center;justify-content:center;padding:60px;color:#6B7280;font-size:14px;flex-direction:column;gap:12px}
 .spin{width:28px;height:28px;border:3px solid #E5E7EB;border-top-color:#4F46E5;border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+@keyframes pulseArrow{0%,100%{opacity:.4;transform:translateY(0)}50%{opacity:1;transform:translateY(3px)}}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .login{background:#0F1117;min-height:100vh;display:flex;align-items:center;justify-content:center}
 .lbox{background:#1A1D27;border-radius:18px;padding:36px 32px;width:380px;max-width:90vw;border:1px solid #2A2D3A;text-align:center}
@@ -673,32 +674,33 @@ function render(){
       projBars='<div style="margin:8px 20px 0;background:linear-gradient(135deg,#0F172A,#1E293B);border-radius:12px;color:#fff;overflow:hidden">';
       projBars+='<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:12px 20px" onclick="S.projOpen=!S.projOpen;render()"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;transition:transform .2s;display:inline-block;transform:rotate('+(S.projOpen?'90':'0')+'deg)">\u25B6</span><span style="font-size:10px;color:rgba(255,255,255,.6);text-transform:uppercase;font-weight:600;letter-spacing:.5px">Project Overview</span></div><div style="font-size:11px;color:rgba(255,255,255,.35)">'+projs.length+' projects \u00b7 '+hrsOf(bf).toFixed(1)+'h \u00b7 '+eur(hrsOf(bf)*curRate)+'</div></div>';
       if(!S.projOpen){
-        const fp=projs[0];const fpct=maxH>0?fp.hours/maxH*100:0;
-        const fsubs=Object.values(fp.subs).sort((a,b)=>b.hours-a.hours);
-        projBars+='<div style="padding:0 20px 14px;cursor:pointer" onclick="S.projOpen=true;render()">';
-        projBars+='<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span style="font-size:12px;font-weight:700">'+fp.code+' <span style="font-weight:400;color:rgba(255,255,255,.4);font-size:10px">'+fp.name+'</span></span><span style="font-size:11px"><span style="color:#34D399;font-weight:600">'+fp.approved.toFixed(1)+'h</span> <span style="color:rgba(255,255,255,.3)">/</span> <span style="color:#60A5FA">'+fp.hours.toFixed(1)+'h</span> <span style="color:rgba(255,255,255,.3)">\u00b7</span> <span style="color:#F59E0B">'+eur(fp.hours*curRate)+'</span></span></div>';
-        projBars+='<div style="height:10px;background:rgba(255,255,255,.06);border-radius:5px;overflow:hidden;display:flex">';
-        fsubs.forEach((s,si)=>{
-          const sc=PCOLS[si%PCOLS.length];
-          const sw=fp.hours>0?s.hours/fp.hours*100:0;
-          const apc=s.hours>0?s.approved/s.hours*100:0;
-          const ppc=s.hours>0?s.pending/s.hours*100:0;
-          const rpc=s.hours>0?s.rejected/s.hours*100:0;
-          projBars+='<div style="width:'+sw+'%;height:100%;position:relative;overflow:hidden" title="'+s.label+': '+s.hours.toFixed(1)+'h">';
-          if(s.approved>0)projBars+='<div style="position:absolute;left:0;top:0;height:100%;width:'+apc+'%;background:'+sc+';opacity:1"></div>';
-          if(s.pending>0)projBars+='<div style="position:absolute;left:'+apc+'%;top:0;height:100%;width:'+ppc+'%;background:'+sc+';opacity:.3"></div>';
-          if(s.rejected>0)projBars+='<div style="position:absolute;left:'+(apc+ppc)+'%;top:0;height:100%;width:'+rpc+'%;background:#EF4444;opacity:.4"></div>';
+        const previewProjs=projs.slice(0,3);
+        projBars+='<div style="position:relative;cursor:pointer" onclick="S.projOpen=true;render()">';
+        projBars+='<div style="max-height:200px;overflow:hidden;padding:0 20px">';
+        previewProjs.forEach((p,pi)=>{
+          const subs=Object.values(p.subs).sort((a,b)=>b.hours-a.hours);
+          const subMax=Math.max(...subs.map(s=>s.hours));
+          if(pi>0)projBars+='<div style="height:1px;background:rgba(255,255,255,.06);margin:10px 0"></div>';
+          projBars+='<div style="margin-bottom:4px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;font-weight:700">'+p.code+' <span style="font-weight:400;color:rgba(255,255,255,.3);font-size:10px">'+p.name+'</span></span><span style="font-size:10px"><span style="color:#34D399;font-weight:600">'+p.approved.toFixed(1)+'h</span> <span style="color:rgba(255,255,255,.15)">/</span> <span style="color:#60A5FA">'+p.hours.toFixed(1)+'h</span></span></div>';
+          subs.forEach((s,si)=>{
+            const sc=PCOLS[si%PCOLS.length];
+            const bw=subMax>0?s.hours/subMax*100:0;
+            const apc=s.hours>0?s.approved/s.hours:0;
+            const ppc=s.hours>0?s.pending/s.hours:0;
+            const rpc=s.hours>0?s.rejected/s.hours:0;
+            projBars+='<div style="margin-bottom:3px"><div style="font-size:9px;color:rgba(255,255,255,.4);margin-bottom:1px">'+s.label+'</div>';
+            projBars+='<div style="height:6px;background:rgba(255,255,255,.04);border-radius:3px;overflow:hidden;width:'+bw+'%"><div style="height:100%;display:flex">';
+            if(s.approved>0)projBars+='<div style="width:'+(apc*100)+'%;height:100%;background:'+sc+'"></div>';
+            if(s.pending>0)projBars+='<div style="width:'+(ppc*100)+'%;height:100%;background:'+sc+';opacity:.3"></div>';
+            if(s.rejected>0)projBars+='<div style="width:'+(rpc*100)+'%;height:100%;background:#EF4444;opacity:.4"></div>';
+            projBars+='</div></div></div>';
+          });
           projBars+='</div>';
         });
         projBars+='</div>';
-        projBars+='<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">';
-        fsubs.forEach((s,si)=>{
-          const sc=PCOLS[si%PCOLS.length];
-          projBars+='<span style="font-size:9px;color:rgba(255,255,255,.5);display:flex;align-items:center;gap:3px"><span style="width:6px;height:6px;border-radius:50%;background:'+sc+';display:inline-block"></span>'+s.label+'</span>';
-        });
-        projBars+='</div>';
-        projBars+='<div style="text-align:center;margin-top:8px;font-size:9px;color:rgba(255,255,255,.25)">Click to expand all '+projs.length+' projects</div>';
-        projBars+='</div>';
+        projBars+='<div style="position:absolute;bottom:0;left:0;right:0;height:70px;background:linear-gradient(to bottom,rgba(15,23,42,0),rgba(15,23,42,.95) 60%,rgba(15,23,42,1));display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:12px">';
+        projBars+='<div style="animation:pulseArrow 1.5s ease-in-out infinite;display:flex;flex-direction:column;align-items:center;gap:2px"><span style="font-size:16px;color:rgba(255,255,255,.5)">\u25BC</span><span style="font-size:10px;color:rgba(255,255,255,.4);letter-spacing:.5px">Expand all '+projs.length+' projects</span></div>';
+        projBars+='</div></div>';
       } else {
         projBars+='<div style="padding:0 20px 18px;display:grid;gap:0">';
         projs.forEach((p,pi)=>{
