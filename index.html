@@ -212,7 +212,7 @@ async function sendRemindEmail(it){
 }
 
 // STATE
-var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],bud:[],arn:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false};
+var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],bud:[],arn:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false,projOpen:false};
 
 function toast(m,t){const e=document.getElementById('toast');e.textContent=m;e.className='toast show';e.style.background=t==='ok'?'#059669':'#DC2626';setTimeout(()=>e.className='toast',3000)}
 function fmt(v){if(!v)return'';if(typeof v==='object'&&v.toISOString)return v.toISOString().substring(0,10);const s=String(v);if(s.match(/^\d{4}-\d{2}/))return s.substring(0,10);const n=parseFloat(v);if(!isNaN(n)&&n>30000&&n<100000){const d=new Date((n-25569)*86400000);return d.toISOString().substring(0,10)}return s.substring(0,10)}
@@ -665,9 +665,9 @@ function render(){
     const projs=Object.values(projMap).sort((a,b)=>b.hours-a.hours);
     if(projs.length>0){
       const maxH=Math.max(...projs.map(p=>p.hours));
-      projBars='<div style="margin:8px 20px 0;background:linear-gradient(135deg,#1E293B,#334155);border-radius:12px;padding:16px 20px;color:#fff">';
-      projBars+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase;font-weight:600">Project Overview</div><div style="font-size:11px;color:rgba(255,255,255,.4)">'+projs.length+' projects \u00b7 '+bf.length+' entries \u00b7 '+hrsOf(bf).toFixed(1)+'h \u00b7 '+eur(hrsOf(bf)*curRate)+'</div></div>';
-      projBars+='<div style="display:grid;gap:10px">';
+      projBars='<div style="margin:8px 20px 0;background:linear-gradient(135deg,#1E293B,#334155);border-radius:12px;padding:10px 20px;color:#fff">';
+      projBars+='<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="S.projOpen=!S.projOpen;render()"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;transition:transform .2s;display:inline-block;transform:rotate('+(S.projOpen?'90':'0')+'deg)">\u25B6</span><span style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase;font-weight:600">Project Overview</span></div><div style="font-size:11px;color:rgba(255,255,255,.4)">'+projs.length+' projects \u00b7 '+hrsOf(bf).toFixed(1)+'h \u00b7 '+eur(hrsOf(bf)*curRate)+'</div></div>';
+      if(S.projOpen){projBars+='<div style="display:grid;gap:10px;margin-top:12px">';
       projs.forEach(p=>{
         const pct=maxH>0?p.hours/maxH*100:0;
         const apct=maxH>0?p.approved/maxH*100:0;
@@ -676,7 +676,7 @@ function render(){
         if(p.approved>0)projBars+='<div style="height:5px;margin-top:2px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+apct+'%;background:linear-gradient(90deg,#10B981,#34D399);border-radius:3px"></div></div>';
         projBars+='</div>';
       });
-      projBars+='</div></div>';
+      projBars+='</div>'}projBars+='</div>';
     }
   }
   // Project card
