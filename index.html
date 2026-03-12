@@ -132,6 +132,19 @@ var tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid,bFid,aFid;
 var isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
 
 var allComments=[],allNotifs=[],sessionChanges=[],bulkMode=false;
+async function batchRun(proms,batchSize=5,delayMs=500){
+  const results=[];
+  for(let i=0;i<proms.length;i+=batchSize){
+    const batch=proms.slice(i,i+batchSize);
+    const res=await Promise.allSettled(batch.map(fn=>fn()));
+    results.push(...res);
+    const failed=res.filter(r=>r.status==='rejected').length;
+    if(failed)console.warn('Batch '+(Math.floor(i/batchSize)+1)+': '+failed+' failed');
+    if(i+batchSize<proms.length)await new Promise(r=>setTimeout(r,delayMs));
+  }
+  return results;
+}
+
 
 async function login(){try{await msalApp.loginRedirect({scopes:sc})}catch(e){console.error(e)}}
 async function getTk(){const a=msalApp.getAllAccounts();if(!a.length)return null;try{const r=await msalApp.acquireTokenSilent({scopes:sc,account:a[0]});tk=r.accessToken;usr=a[0].name||a[0].username;usrMail=(a[0].username||'').toLowerCase();isAdmin=ADMINS.includes(usrMail);isFinal=usrMail===FINAL_APPROVER;isSenior=SENIORS.includes(usrMail);canAdmin=isFinal||isSenior;return tk}catch(e){await msalApp.acquireTokenRedirect({scopes:sc});return null}}
@@ -372,8 +385,8 @@ async function remindApprover(it){
   toast('Reminder queued for '+approver,'ok');render();
 }
 
-async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;const proms=items.map(it=>{if(t==='hours')return apH(it,it.Q,'');if(t==='budel')return apB(it,it.Q,'');if(t==='arends')return apA(it,it.Q,'');return apP(it,it.Q,'')});await Promise.all(proms);bulkMode=false;S.sel=new Set();S.sf=null;toast(items.length+' approved at once','ok');render()}
-async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;const proms=items.map(it=>{if(it.id.startsWith('H'))return confirmH(it);if(it.id.startsWith('B'))return confirmB(it);if(it.id.startsWith('A'))return confirmA(it);return confirmP(it)});await Promise.all(proms);bulkMode=false;S.sel=new Set();S.sf=null;toast(items.length+' confirmed at once','ok');render()}
+async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;toast('Approving '+items.length+' items...','ok');const fns=items.map(it=>()=>{if(t==='hours')return apH(it,it.Q,'');if(t==='budel')return apB(it,it.Q,'');if(t==='arends')return apA(it,it.Q,'');return apP(it,it.Q,'')});const res=await batchRun(fns,5,600);bulkMode=false;const ok=res.filter(r=>r.status==='fulfilled').length;const fail=res.filter(r=>r.status==='rejected').length;S.sel=new Set();S.sf=null;if(fail)toast(ok+' approved, '+fail+' failed — retry those','er');else toast(ok+' approved at once','ok');render()}
+async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;toast('Confirming '+items.length+' items...','ok');const fns=items.map(it=>()=>{if(it.id.startsWith('H'))return confirmH(it);if(it.id.startsWith('B'))return confirmB(it);if(it.id.startsWith('A'))return confirmA(it);return confirmP(it)});const res=await batchRun(fns,5,600);bulkMode=false;const ok=res.filter(r=>r.status==='fulfilled').length;const fail=res.filter(r=>r.status==='rejected').length;S.sel=new Set();S.sf=null;if(fail)toast(ok+' confirmed, '+fail+' failed — retry those','er');else toast(ok+' confirmed at once','ok');render()}
 
 // FILTERING
 function norm(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim()}
