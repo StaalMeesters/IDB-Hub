@@ -132,19 +132,6 @@ var tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid,bFid,aFid;
 var isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
 
 var allComments=[],allNotifs=[],sessionChanges=[],bulkMode=false;
-async function batchRun(proms,batchSize=5,delayMs=500){
-  const results=[];
-  for(let i=0;i<proms.length;i+=batchSize){
-    const batch=proms.slice(i,i+batchSize);
-    const res=await Promise.allSettled(batch.map(fn=>fn()));
-    results.push(...res);
-    const failed=res.filter(r=>r.status==='rejected').length;
-    if(failed)console.warn('Batch '+(Math.floor(i/batchSize)+1)+': '+failed+' failed');
-    if(i+batchSize<proms.length)await new Promise(r=>setTimeout(r,delayMs));
-  }
-  return results;
-}
-
 
 async function login(){try{await msalApp.loginRedirect({scopes:sc})}catch(e){console.error(e)}}
 async function getTk(){const a=msalApp.getAllAccounts();if(!a.length)return null;try{const r=await msalApp.acquireTokenSilent({scopes:sc,account:a[0]});tk=r.accessToken;usr=a[0].name||a[0].username;usrMail=(a[0].username||'').toLowerCase();isAdmin=ADMINS.includes(usrMail);isFinal=usrMail===FINAL_APPROVER;isSenior=SENIORS.includes(usrMail);canAdmin=isFinal||isSenior;return tk}catch(e){await msalApp.acquireTokenRedirect({scopes:sc});return null}}
@@ -154,7 +141,7 @@ async function gPost(u,b){const r=await fetch('https://graph.microsoft.com/v1.0'
 async function findSite(){if(driveId)return;const s=await gGet('/sites/'+C.siteHost+':'+C.sitePath);siteId=s.id;const d=await gGet('/sites/'+siteId+'/drive');driveId=d.id}
 async function findFile(n){try{return(await gGet('/drives/'+driveId+'/root:/'+encodeURIComponent(n))).id}catch(e){const s=await gGet('/drives/'+driveId+"/root/search(q='"+encodeURIComponent(n)+"')");const m=s.value.find(f=>f.name===n);if(m)return m.id;throw new Error('Not found: '+n)}}
 async function readXL(fid,sh,rng){const path='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/"+(rng?"range(address='"+rng+"')?$select=values":"usedRange?$select=values");try{return await gGet(path)}catch(e){throw e}}
-async function writeR(fid,sh,addr,vals){const url='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/range(address='"+addr+"')";for(let attempt=0;attempt<4;attempt++){try{await gPatch(url,{values:[vals]});return}catch(e){const is429=e.message&&(e.message.includes('429')||e.message.includes('throttl'));const wait=is429?2000*(attempt+1):500*(attempt+1);console.warn('writeR attempt '+(attempt+1)+'/4:',addr,is429?'THROTTLED':'error',e.message,'wait '+wait+'ms');if(attempt<3){await getTk();await new Promise(r=>setTimeout(r,wait));}else throw e}}}
+async function writeR(fid,sh,addr,vals){const url='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/range(address='"+addr+"')";try{await gPatch(url,{values:[vals]})}catch(e){console.warn('writeR retry',addr,e.message);await getTk();await gPatch(url,{values:[vals]})}}
 
 // Sheets helper - create if missing
 async function ensureSheet(fid,name,headers){
@@ -346,6 +333,48 @@ window.createPOGroup=async(groupKey,data)=>{
 };
 
 
+// ACTIONS
+async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'hours',status:st,hours:h});writeNotif('approve',it.I,'hours',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apH fail',it.I,e)}}
+async function rjH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'hours',comment:c});writeNotif('reject',it.I,'hours',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjH fail',it.I,e)}}
+async function apP(it,q,c){const a=Math.abs(q-it.Q)>.5,st=a?'Adjusted':'Approved',nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,[st,q,c,usr])]);it.st=st;it.aq=q;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'po',status:st});writeNotif('approve',it.I,'po',st+' qty '+q+(c?' — '+c:''));toast('PO '+st,'ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apP fail',it.I,e)}}
+async function rjP(it,c){const nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Disapproved',0,c||'Disapproved',usr])]);it.st='Disapproved';it.aq=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'po',comment:c});writeNotif('reject',it.I,'po',c||'Disapproved');toast('Disapproved','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjP fail',it.I,e)}}
+async function confirmH(it){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'hours'});writeNotif('confirm',it.I,'hours','Confirmed');toast('Confirmed #'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmH fail',it.I,e)}}
+async function returnH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Returned',usr,nw]);await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'hours'});writeNotif('return',it.I,'hours','Returned to approver');toast('Returned #'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnH fail',it.I,e)}}
+async function confirmP(it){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'po'});writeNotif('confirm',it.I,'po','Confirmed');toast('PO Confirmed','ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmP fail',it.I,e)}}
+async function returnP(it,c){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Returned',usr,nw]);await writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Pending','','','']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.aq=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'po'});writeNotif('return',it.I,'po','Returned to approver');toast('PO Returned','ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnP fail',it.I,e)}}
+async function apB(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(bFid,C.bSheet,C.bW.st+it.row+':'+C.bW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'budel',status:st,hours:h});writeNotif('approve',it.I,'budel',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apB fail',it.I,e)}}
+async function rjB(it,c){const nw=nowISO();try{await writeR(bFid,C.bSheet,C.bW.st+it.row+':'+C.bW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'budel',comment:c});writeNotif('reject',it.I,'budel',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjB fail',it.I,e)}}
+async function confirmB(it){const nw=nowISO();try{await writeR(bFid,C.bSheet,C.bF.fs+it.row+':'+C.bF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'budel'});writeNotif('confirm',it.I,'budel','Confirmed');toast('Confirmed B#'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmB fail',it.I,e)}}
+async function returnB(it,c){const nw=nowISO();try{await writeR(bFid,C.bSheet,C.bF.fs+it.row+':'+C.bF.fd+it.row,['Returned',usr,nw]);await writeR(bFid,C.bSheet,C.bW.st+it.row+':'+C.bW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'budel'});writeNotif('return',it.I,'budel','Returned to approver');toast('Returned B#'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnB fail',it.I,e)}}
+
+async function apA(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(aFid,C.aSheet,C.aW.st+it.row+':'+C.aW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'arends',status:st,hours:h});writeNotif('approve',it.I,'arends',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apA fail',it.I,e)}}
+async function rjA(it,c){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.aW.st+it.row+':'+C.aW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'arends',comment:c});writeNotif('reject',it.I,'arends',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjA fail',it.I,e)}}
+async function confirmA(it){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.aF.fs+it.row+':'+C.aF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'arends'});writeNotif('confirm',it.I,'arends','Confirmed');toast('Confirmed A#'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmA fail',it.I,e)}}
+async function returnA(it,c){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.aF.fs+it.row+':'+C.aF.fd+it.row,['Returned',usr,nw]);await writeR(aFid,C.aSheet,C.aW.st+it.row+':'+C.aW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'arends'});writeNotif('return',it.I,'arends','Returned to approver');toast('Returned A#'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnA fail',it.I,e)}}
+
+// Reassign
+async function reassign(it,newName){
+  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A');const oldAF=isH?it.AF:it.OB;
+  if(it.id.startsWith('H')){it.AF=newName;await writeR(hFid,C.hSheet,'P'+it.row,[newName])}
+  else if(it.id.startsWith('B')){it.AF=newName;await writeR(bFid,C.bSheet,'P'+it.row,[newName])}
+  else if(it.id.startsWith('A')){it.AF=newName;await writeR(aFid,C.aSheet,'P'+it.row,[newName])}
+  else{it.OB=newName;await writeR(pFid,C.pSheet,'R'+it.row,[newName])}
+  writeNotif('reassign',it.I,it.id.startsWith('H')?'hours':it.id.startsWith('B')?'budel':it.id.startsWith('A')?'arends':'po','From '+oldAF+' to '+newName);
+  toast('Reassigned to '+newName,'ok');render();
+}
+
+// Remind
+async function remindApprover(it){
+  const isH=it.id.startsWith('H');const approver=isH?it.AF:it.OB;const nw=nowISO();
+  if(isH){it.rsa=nw;await writeR(hFid,C.hSheet,'AA'+it.row,[nw])}
+  else{it.rsa=nw;await writeR(pFid,C.pSheet,'AB'+it.row,[nw])}
+  writeNotif('remind',it.I,isH?'hours':'po','Reminder sent to '+approver);
+  toast('Reminder queued for '+approver,'ok');render();
+}
+
+async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;const proms=items.map(it=>{if(t==='hours')return apH(it,it.Q,'');if(t==='budel')return apB(it,it.Q,'');if(t==='arends')return apA(it,it.Q,'');return apP(it,it.Q,'')});await Promise.all(proms);bulkMode=false;S.sel=new Set();S.sf=null;toast(items.length+' approved at once','ok');render()}
+async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;const proms=items.map(it=>{if(it.id.startsWith('H'))return confirmH(it);if(it.id.startsWith('B'))return confirmB(it);if(it.id.startsWith('A'))return confirmA(it);return confirmP(it)});await Promise.all(proms);bulkMode=false;S.sel=new Set();S.sf=null;toast(items.length+' confirmed at once','ok');render()}
+
 // FILTERING
 function norm(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim()}
 function isMe(val){if(!val)return false;const v=norm(val),n=norm(usr),m=norm(usrMail.split('@')[0].replace(/\./g,' '));return v===n||v===m||n.includes(v)||v.includes(n)||(m&&(v.includes(m)||m.includes(v)))}
@@ -358,7 +387,6 @@ function myD(){
   return isH?S.hrs.filter(d=>isMe(d.AF)):isB?S.bud.filter(d=>isMe(d.AF)):isA?S.arn.filter(d=>isMe(d.AF)):S.pos.filter(d=>isMe(d.OB));
 }
 function eS(){return S.sf||S.f.st}
-const resetF=()=>({st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'});
 function getBaseF(){
   let d=myD(),f=S.f;const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends',isHB=isH||isB||isA;
   if(f.cmt)d=d.filter(x=>hasComments(x.I));
@@ -420,67 +448,52 @@ function fO(k){
   return[];
 }
 
-// ACTIONS
-async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'hours',status:st,hours:h});writeNotif('approve',it.I,'hours',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apH fail',it.I,e)}}
-async function rjH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'hours',comment:c});writeNotif('reject',it.I,'hours',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjH fail',it.I,e)}}
-async function apP(it,q,c){const a=Math.abs(q-it.Q)>.5,st=a?'Adjusted':'Approved',nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,[st,q,c,usr])]);it.st=st;it.aq=q;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'po',status:st});writeNotif('approve',it.I,'po',st+' qty '+q+(c?' — '+c:''));toast('PO '+st,'ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apP fail',it.I,e)}}
-async function rjP(it,c){const nw=nowISO();try{await Promise.all([writeR(pFid,C.pSheet,C.pW.ad+it.row,[nw]),writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Disapproved',0,c||'Disapproved',usr])]);it.st='Disapproved';it.aq=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'po',comment:c});writeNotif('reject',it.I,'po',c||'Disapproved');toast('Disapproved','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjP fail',it.I,e)}}
-async function confirmH(it){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'hours'});writeNotif('confirm',it.I,'hours','Confirmed');toast('Confirmed #'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmH fail',it.I,e)}}
-async function returnH(it,c){const nw=nowISO();try{await writeR(hFid,C.hSheet,C.hF.fs+it.row+':'+C.hF.fd+it.row,['Returned',usr,nw]);await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'hours'});writeNotif('return',it.I,'hours','Returned to approver');toast('Returned #'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnH fail',it.I,e)}}
-async function confirmP(it){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'po'});writeNotif('confirm',it.I,'po','Confirmed');toast('PO Confirmed','ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmP fail',it.I,e)}}
-async function returnP(it,c){const nw=nowISO();try{await writeR(pFid,C.pSheet,C.pF.fs+it.row+':'+C.pF.fd+it.row,['Returned',usr,nw]);await writeR(pFid,C.pSheet,C.pW.st+it.row+':'+C.pW.sb+it.row,['Pending','','','']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.aq=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'po'});writeNotif('return',it.I,'po','Returned to approver');toast('PO Returned','ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnP fail',it.I,e)}}
-async function apB(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(bFid,C.bSheet,C.bW.st+it.row+':'+C.bW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'budel',status:st,hours:h});writeNotif('approve',it.I,'budel',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apB fail',it.I,e)}}
-async function rjB(it,c){const nw=nowISO();try{await writeR(bFid,C.bSheet,C.bW.st+it.row+':'+C.bW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'budel',comment:c});writeNotif('reject',it.I,'budel',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjB fail',it.I,e)}}
-async function confirmB(it){const nw=nowISO();try{await writeR(bFid,C.bSheet,C.bF.fs+it.row+':'+C.bF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'budel'});writeNotif('confirm',it.I,'budel','Confirmed');toast('Confirmed B#'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmB fail',it.I,e)}}
-async function returnB(it,c){const nw=nowISO();try{await writeR(bFid,C.bSheet,C.bF.fs+it.row+':'+C.bF.fd+it.row,['Returned',usr,nw]);await writeR(bFid,C.bSheet,C.bW.st+it.row+':'+C.bW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'budel'});writeNotif('return',it.I,'budel','Returned to approver');toast('Returned B#'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnB fail',it.I,e)}}
+// Comment sidebar
+var cmtItem=null;
+function openCmt(id){const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;cmtItem=it;S.det=null;renderCmtSB();document.getElementById('cmtov').className='ov open';document.getElementById('cmtsb').style.display='flex';render()}
+function closeCmt(){cmtItem=null;document.getElementById('cmtov').className='ov';document.getElementById('cmtsb').style.display='none'}
+async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';const isH=cmtItem.id.startsWith('H'),isB=cmtItem.id.startsWith('B'),tab=isH?'hours':isB?'budel':cmtItem.id.startsWith('A')?'arends':'po';try{await addComment(cmtItem.I,tab,text);writeNotif('comment',cmtItem.I,tab,text.substring(0,80));renderCmtSB();render();toast('Comment saved','ok');
+  // If IDB Admin comments, send real-time email to assigned approver
+  if(isAdmin){
+    const it=cmtItem;
+    const approver=isH?it.AF:it.OB;
+    const itemDesc=isH?'Hours #'+it.I+' \u2014 '+it.E+' ('+it.D+')':'PO-'+it.I+' \u2014 '+(it.J||it.Z);
+    const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 New Comment</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+' '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})+'</p><hr><p><b>Task:</b> '+itemDesc+'</p><p><b>Assigned to:</b> '+approver+'</p><div style="background:#F3F4F6;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px">\uD83D\uDCAC '+text.replace(/</g,'&lt;')+'</div><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub to reply</a></p>';
+    // Find approver email - check ASSIGNEE_EMAILS mapping
+    const emailMap={"Rene Bos":"rb@staalmeesters.com","Rob Bos":"rob@staalmeesters.com","Floris uit het Broek":"fub@staalmeesters.com","Ashkan Karamroudi":"ak@staalmeesters.com"};
+    const approverEmail=emailMap[approver];
+    const recip=[];
+    if(approverEmail&&approverEmail!==usrMail)recip.push({emailAddress:{address:approverEmail}});
+    if(recip.length){try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Comment on '+itemDesc,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});toast('Comment sent to '+approver,'ok')}catch(e){console.error('Comment email failed:',e)}}
+  }
+}catch(e){toast('Failed','er')}}
+function renderCmtSB(){const el=document.getElementById('cmtsb'),it=cmtItem;if(!it){el.style.display='none';return}const cmts=getComments(it.I),isH=it.id.startsWith('H');let h='<div style="padding:16px 18px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;flex-shrink:0"><div><div style="font-size:14px;font-weight:700">\uD83D\uDCAC Comments</div><div style="font-size:11px;color:#6B7280">'+(isH?'#'+it.I+' \u2014 '+it.E:'PO-'+it.I+' \u2014 '+(it.J||it.Z))+'</div></div><button onclick="closeCmt()" style="background:0;border:0;font-size:18px;cursor:pointer;color:#aaa">\u2715</button></div><div style="flex:1;overflow-y:auto;padding:16px 18px">';if(!cmts.length)h+='<div style="text-align:center;padding:40px 0;color:#aaa;font-size:13px">No comments yet</div>';cmts.forEach(c=>{const mine=c.email===usrMail;const d=new Date(c.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});h+='<div class="cmtbub '+(mine?'me':'them')+'"><div style="font-size:10px;color:#6B7280;margin-bottom:3px"><b>'+c.author+'</b> \u00b7 '+ts+'</div>'+c.text.replace(/</g,'&lt;')+'</div>'});h+='</div><div style="padding:12px 18px;border-top:1px solid #E5E7EB;flex-shrink:0;display:flex;gap:8px"><textarea id="cmtInput" placeholder="Write a comment..." style="flex:1;padding:8px 10px;border:1px solid #D1D5DB;border-radius:8px;font-size:12px;font-family:inherit;resize:none;min-height:38px;box-sizing:border-box"></textarea><button onclick="submitCmt()" style="padding:8px 16px;background:#4F46E5;color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Send</button></div>';el.innerHTML=h}
 
-async function apA(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(aFid,C.aSheet,C.aW.st+it.row+':'+C.aW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'arends',status:st,hours:h});writeNotif('approve',it.I,'arends',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apA fail',it.I,e)}}
-async function rjA(it,c){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.aW.st+it.row+':'+C.aW.su+it.row,['Rejected',0,c||'Rejected',usr,nw,'Yes']);it.st='Rejected';it.ah=0;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'reject',id:it.I,tab:'arends',comment:c});writeNotif('reject',it.I,'arends',c||'Rejected');toast('Rejected','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('rjA fail',it.I,e)}}
-async function confirmA(it){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.aF.fs+it.row+':'+C.aF.fd+it.row,['Confirmed',usr,nw]);it.fs='Confirmed';it.fsb=usr;it.fd=nw;S.sf=null;sessionChanges.push({type:'confirm',id:it.I,tab:'arends'});writeNotif('confirm',it.I,'arends','Confirmed');toast('Confirmed A#'+it.I,'ok');render()}catch(e){toast('Confirm failed: '+e.message,'er');console.error('confirmA fail',it.I,e)}}
-async function returnA(it,c){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.aF.fs+it.row+':'+C.aF.fd+it.row,['Returned',usr,nw]);await writeR(aFid,C.aSheet,C.aW.st+it.row+':'+C.aW.su+it.row,['Pending','','','','','No']);it.fs='Returned';it.fsb=usr;it.fd=nw;it.st='Pending';it.ah=null;it.sb='';S.sf=null;sessionChanges.push({type:'return',id:it.I,tab:'arends'});writeNotif('return',it.I,'arends','Returned to approver');toast('Returned A#'+it.I,'ok');render()}catch(e){toast('Return failed: '+e.message,'er');console.error('returnA fail',it.I,e)}}
-
-// Reassign
-async function reassign(it,newName){
-  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A');const oldAF=isH?it.AF:it.OB;
-  if(it.id.startsWith('H')){it.AF=newName;await writeR(hFid,C.hSheet,'P'+it.row,[newName])}
-  else if(it.id.startsWith('B')){it.AF=newName;await writeR(bFid,C.bSheet,'P'+it.row,[newName])}
-  else if(it.id.startsWith('A')){it.AF=newName;await writeR(aFid,C.aSheet,'P'+it.row,[newName])}
-  else{it.OB=newName;await writeR(pFid,C.pSheet,'R'+it.row,[newName])}
-  writeNotif('reassign',it.I,it.id.startsWith('H')?'hours':it.id.startsWith('B')?'budel':it.id.startsWith('A')?'arends':'po','From '+oldAF+' to '+newName);
-  toast('Reassigned to '+newName,'ok');render();
+// Reassign modal
+function showReassignModal(id){
+  const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;
+  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A'),cur=isH?it.AF:it.OB;
+  let h='<div class="modal-ov" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3 style="margin-bottom:12px">Reassign Task #'+it.I+'</h3><p style="font-size:12px;color:#6B7280;margin-bottom:12px">Current: <b>'+cur+'</b></p><div style="display:grid;gap:6px">';
+  ASSIGNEES.forEach(a=>{const sel=a===cur;h+='<button onclick="doReassign(\''+id+"','"+a.replace(/'/g,"\\'")+'\')" style="padding:10px 14px;border-radius:8px;border:1px solid '+(sel?'#4F46E5':'#E5E7EB')+';background:'+(sel?'#EEF2FF':'#fff')+';text-align:left;cursor:pointer;font-size:13px;font-family:inherit;font-weight:'+(sel?'700':'400')+'">'+a+(sel?' \u2713':'')+'</button>'});
+  h+='</div><button onclick="closeModal()" style="margin-top:12px;padding:8px 16px;border-radius:8px;border:0;background:#F3F4F6;color:#6B7280;cursor:pointer;font-size:12px;width:100%">Cancel</button></div></div>';
+  document.getElementById('modal').innerHTML=h;
 }
+function closeModal(){document.getElementById('modal').innerHTML=''}
 
-// Remind
-async function remindApprover(it){
-  const isH=it.id.startsWith('H');const approver=isH?it.AF:it.OB;const nw=nowISO();
-  if(isH){it.rsa=nw;await writeR(hFid,C.hSheet,'AA'+it.row,[nw])}
-  else{it.rsa=nw;await writeR(pFid,C.pSheet,'AB'+it.row,[nw])}
-  writeNotif('remind',it.I,isH?'hours':'po','Reminder sent to '+approver);
-  toast('Reminder queued for '+approver,'ok');render();
-}
-
-async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;let ok=0,fail=0;for(const it of items){try{if(t==='hours')await apH(it,it.Q,'');else if(t==='budel')await apB(it,it.Q,'');else if(t==='arends')await apA(it,it.Q,'');else await apP(it,it.Q,'');ok++;await new Promise(r=>setTimeout(r,200))}catch(e){fail++;console.error('Bulk item failed:',it.I,e);await new Promise(r=>setTimeout(r,1000))}}bulkMode=false;S.sel=new Set();S.sf=null;if(fail)toast(ok+' approved, '+fail+' failed','er');else toast(ok+' approved','ok');render()}
-async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;let ok=0,fail=0;for(const it of items){try{if(it.id.startsWith('H'))await confirmH(it);else if(it.id.startsWith('B'))await confirmB(it);else if(it.id.startsWith('A'))await confirmA(it);else await confirmP(it);ok++;await new Promise(r=>setTimeout(r,200))}catch(e){fail++;console.error('Bulk confirm failed:',it.I,e);await new Promise(r=>setTimeout(r,1000))}}bulkMode=false;S.sel=new Set();S.sf=null;if(fail)toast(ok+' confirmed, '+fail+' failed','er');else toast(ok+' confirmed','ok');render()}
-window.doB=async()=>{try{await bulkA()}catch(e){toast('Error','er')}};
-window.doBC=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
-window.doBConfirm=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
+// GLOBALS
+const resetF=()=>({st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'});
+window.doLogin=async()=>{document.getElementById('app').innerHTML='<div class="ldr"><div class="spin"></div>Redirecting...</div>';await login()};
 window.swTab=t=>{S.tab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
 window.swSoTab=t=>{S.soTab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
 window.swAdTab=t=>{S.adTab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
 window.setF=(k,v)=>{S.f[k]=v;const t=curTab();if(t==='hours'||t==='budel'||t==='arends'){if(k==='co'){S.f.cd='All';S.f.pr='All';S.f.sp='All';S.f.em='All'}else if(k==='cd'&&v!=='All'){const m=myD().find(d=>(d.C||'--')===v);if(m)S.f.pr=m.M||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.M===v);if(m)S.f.cd=m.C||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}else{if(k==='co'){S.f.cd='All';S.f.pr='All';S.f.sp='All';S.f.em='All'}else if(k==='cd'&&v!=='All'){const m=myD().find(d=>d.PN===v);if(m)S.f.pr=m.J||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.J===v);if(m)S.f.cd=m.PN||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}render()};
 window.toggleMo=v=>{const a=S.f.mo,i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);render()};
-window.tSel=id=>{if(S.sel.has(id))S.sel.delete(id);else S.sel.add(id);render()};
-window.tAll=()=>{const fi=getF();if(S.sel.size===fi.length)S.sel=new Set();else fi.forEach(d=>S.sel.add(d.id));render()};
-window.cSt=k=>{S.sf=k;S.sel=new Set();render()};
-window.sAdj=v=>{S.adj=v;render()};
 window.doSort=k=>{if(S.sortK===k)S.sortD=S.sortD==='asc'?'desc':'asc';else{S.sortK=k;S.sortD='asc'}render()};
+window.cSt=k=>{S.sf=S.sf===k?null:k;S.f.st='All';render()};
 window.resF=()=>{S.f=resetF();S.sf=null;S.sel=new Set();render()};
 window.tCmt=()=>{S.f.cmt=!S.f.cmt;render()};
-window.doRef=loadData;
-window.doSignOut=()=>{msalApp.logoutRedirect({postLogoutRedirectUri:C.redirect})};
-
-window.tNotif=()=>{S.notifOpen=!S.notifOpen;render()};
-
+window.tSel=id=>{S.sel.has(id)?S.sel.delete(id):S.sel.add(id);render()};
+window.tAll=()=>{if(S.sel.size){S.sel=new Set()}else{const isSO2=S.tab==='signoff';S.sel=new Set(getF().filter(d=>isSO2?(d.fs!=='Confirmed'):(d.st==='Pending')).map(d=>d.id))}render()};
 window.oDet=id=>{closeCmt();const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;S.det=it;const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A');S.adj=isH?(it.ah??it.Q):(it.aq??it.Q);S.cmt=it.cm||'';render()};
 window.cDet=()=>{S.det=null;render()};
 window.openCmt=openCmt;
@@ -494,38 +507,14 @@ window.doReturn=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d
 window.doReassign=async(id,name)=>{closeModal();const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{await reassign(it,name)}catch(e){toast('Error','er')}};
 window.doRemind=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{await sendRemindEmail(it)}catch(e){toast('Error','er')}};
 window.showReassignModal=showReassignModal;
+window.sAdj=v=>{S.adj=v;renderSB()};
+window.doB=async()=>{try{await bulkA()}catch(e){toast('Error','er')}};
+window.doBC=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
+window.doBConfirm=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
+window.doRef=loadData;
+window.doSignOut=()=>{msalApp.logoutRedirect({postLogoutRedirectUri:C.redirect})};
 
-// Comment sidebar
-var cmtItem=null;
-function openCmt(id){const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;cmtItem=it;document.getElementById('cmtsb').style.display='flex';document.getElementById('cmtov').style.display='block';renderCmtSB()}
-function closeCmt(){cmtItem=null;document.getElementById('cmtsb').style.display='none';document.getElementById('cmtov').style.display='none'}
-function renderCmtSB(){const el=document.getElementById('cmtsb'),it=cmtItem;if(!it){el.style.display='none';return}const cmts=getComments(it.I),isH=it.id.startsWith('H');let h='<div style="padding:16px 18px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;flex-shrink:0"><div><div style="font-size:14px;font-weight:700">\uD83D\uDCAC Comments</div><div style="font-size:11px;color:#6B7280">'+(isH?'#'+it.I+' \u2014 '+it.E:'PO-'+it.I+' \u2014 '+(it.J||it.Z))+'</div></div><button onclick="closeCmt()" style="background:0;border:0;font-size:18px;cursor:pointer;color:#aaa">\u2715</button></div><div style="flex:1;overflow-y:auto;padding:16px 18px">';if(!cmts.length)h+='<div style="text-align:center;padding:40px 0;color:#aaa;font-size:13px">No comments yet</div>';cmts.forEach(c=>{const mine=c.email===usrMail;const d=new Date(c.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});h+='<div class="cmtbub '+(mine?'me':'them')+'"><div style="font-size:10px;color:#6B7280;margin-bottom:3px"><b>'+c.author+'</b> \u00b7 '+ts+'</div>'+c.text.replace(/</g,'&lt;')+'</div>'});h+='</div><div style="padding:12px 18px;border-top:1px solid #E5E7EB;flex-shrink:0;display:flex;gap:8px"><textarea id="cmtInput" placeholder="Write a comment..." style="flex:1;padding:8px 10px;border:1px solid #D1D5DB;border-radius:8px;font-size:12px;font-family:inherit;resize:none;min-height:38px;box-sizing:border-box"></textarea><button onclick="submitCmt()" style="padding:8px 16px;background:#4F46E5;color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Send</button></div>';el.innerHTML=h}
-async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';const isH=cmtItem.id.startsWith('H'),isB=cmtItem.id.startsWith('B'),isA=cmtItem.id.startsWith('A'),tab=isH?'hours':isB?'budel':isA?'arends':'po';try{await addComment(cmtItem.I,tab,text);writeNotif('comment',cmtItem.I,tab,text.substring(0,80));renderCmtSB();render();toast('Comment saved','ok');
-  // Email notification
-  const approver=isH||isB||isA?cmtItem.AF:cmtItem.OB;
-  const itemDesc=(isH||isB||isA)?'#'+cmtItem.I+' \u2014 '+cmtItem.E:'PO-'+cmtItem.I;
-  const body='<div style="font-family:Segoe UI,sans-serif"><p><b>'+usr+'</b> commented on '+itemDesc+':</p><blockquote style="border-left:3px solid #4F46E5;padding:8px 12px;margin:8px 0;background:#F9FAFB;border-radius:4px">'+text+'</blockquote><p><a href="'+C.redirect+'">Open IDB Approval Hub</a></p></div>';
-  const emailMap={"Rene Bos":"rb@staalmeesters.com","Rob Bos":"rob@staalmeesters.com","Floris uit het Broek":"fub@staalmeesters.com","Ashkan Karamroudi":"ak@staalmeesters.com"};
-  const approverEmail=emailMap[approver];
-  const recip=[];
-  if(approverEmail&&approverEmail!==usrMail)recip.push({emailAddress:{address:approverEmail}});
-  if(recip.length){try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Comment on '+itemDesc,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});toast('Comment sent to '+approver,'ok')}catch(e){console.error('Comment email failed:',e)}}
-}catch(e){toast('Failed','er')}}
-
-// Reassign modal
-function showReassignModal(id){
-  const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;
-  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A'),cur=isH?it.AF:it.OB;
-  let h='<div class="modal-ov" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3 style="margin-bottom:12px">Reassign Task #'+it.I+'</h3><p style="font-size:12px;color:#6B7280;margin-bottom:12px">Current: <b>'+cur+'</b></p>';
-  ASSIGNEES.forEach(a=>{
-    if(a!==cur)h+='<button style="display:block;width:100%;text-align:left;padding:8px 12px;border:1px solid #E5E7EB;border-radius:6px;margin-bottom:4px;background:#fff;cursor:pointer;font-size:12px" onclick="doReassign(\''+it.id+'\',\''+a+'\')">'+a+'</button>';
-  });
-  h+='<button onclick="closeModal()" style="margin-top:8px;padding:6px 12px;border-radius:6px;border:1px solid #D1D5DB;background:#fff;font-size:11px;cursor:pointer">Cancel</button></div></div>';
-  document.getElementById('modal').innerHTML=h;
-}
-function closeModal(){document.getElementById('modal').innerHTML=''}
-
-window.startResize=function(e){e.stopPropagation();e.preventDefault();const th=e.target.parentElement,table=th.closest('table');if(!table.style.tableLayout){table.style.tableLayout='fixed';table.style.width='100%';table.querySelectorAll('th').forEach(t=>{t.style.width=t.offsetWidth+'px'})}const startX=e.pageX,startW=th.offsetWidth;e.target.classList.add('resizing');function onMove(ev){th.style.width=Math.max(40,startW+(ev.pageX-startX))+'px'}function onUp(){document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);e.target.classList.remove('resizing')}document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp)};
+window.tNotif=()=>{S.notifOpen=!S.notifOpen;render()};
 
 // Column resize
 // WEEKLY DIGEST
@@ -875,10 +864,7 @@ function render(){
     poHTML+='</div>';
     // Rate info bar
     if(!isPORFPO){
-      const filtSrc=moFilter.length>0?srcData.filter(d=>d.D&&moFilter.some(m=>d.D.startsWith(m))):srcData;
-      const filtH=filtSrc.reduce((s,d)=>s+(d.ah||d.Q),0);
-      const filtLabel=moFilter.length>0?moFilter.map(m=>{const p=m.split('-');return MS[+p[1]-1]+' '+p[0]}).join(', '):'All time';
-      poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span> \u00b7 <span style="color:#059669">'+filtLabel+'</span></div><div style="font-size:11px;color:#065F46"><b>'+filtSrc.length+'</b> entries \u00b7 <b>'+filtH.toFixed(1)+'h</b> \u00b7 <b>'+eur(filtH*srcRate)+'</b></div></div>';
+      poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span></div><div style="font-size:11px;color:#065F46">Total confirmed: <b>'+srcData.length+'</b> entries \u00b7 <b>'+(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)).toFixed(1)+'h</b> \u00b7 <b>'+eur(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)*srcRate)+'</b></div></div>';
     }
     // Month filter
     if(moOpts.length>0){
