@@ -213,7 +213,7 @@ async function sendRemindEmail(it){
 }
 
 // STATE
-var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],bud:[],arn:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false,projOpen:false,poData:[],poInputs:{}};
+var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],bud:[],arn:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false,projOpen:false,poData:[],poInputs:{},poTab:'idb'};
 
 function toast(m,t){const e=document.getElementById('toast');e.textContent=m;e.className='toast show';e.style.background=t==='ok'?'#059669':'#DC2626';setTimeout(()=>e.className='toast',3000)}
 function fmt(v){if(!v)return'';if(typeof v==='object'&&v.toISOString)return v.toISOString().substring(0,10);const s=String(v);if(s.match(/^\d{4}-\d{2}/))return s.substring(0,10);const n=parseFloat(v);if(!isNaN(n)&&n>30000&&n<100000){const d=new Date((n-25569)*86400000);return d.toISOString().substring(0,10)}return s.substring(0,10)}
@@ -812,113 +812,140 @@ function render(){
   let np='';if(S.notifOpen){np='<div class="notif-panel"><div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;font-weight:700;font-size:13px;display:flex;justify-content:space-between">Notifications<button onclick="tNotif()" style="background:0;border:0;cursor:pointer;color:#aaa;font-size:16px">\u2715</button></div>';if(!allNotifs.length)np+='<div style="padding:30px;text-align:center;color:#aaa;font-size:12px">No notifications</div>';allNotifs.slice(0,30).forEach(n=>{const ic=n.action==='approve'?'\u2705':n.action==='reject'?'\u274C':n.action==='confirm'?'\uD83D\uDD12':n.action==='return'?'\u21A9':n.action==='reassign'?'\uD83D\uDD04':n.action==='remind'?'\uD83D\uDD14':'\uD83D\uDCAC';const d=new Date(n.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});np+='<div style="padding:10px 16px;border-bottom:1px solid #F3F4F6;font-size:12px">'+ic+' <b>'+n.actor+'</b> '+n.action+' #'+n.rowId+'<div style="color:#6B7280;font-size:10px;margin-top:2px">'+n.details+' \u00b7 '+ts+'</div></div>'});np+='</div>'}
   // PO CREATION TAB RENDERING
   if(S.tab==='pocreate'&&isFinal){
-    const allConfH=[...S.hrs,...S.bud,...S.arn].filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
-    const allConfP=S.pos.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
-    // Group hours by month → project → subphase → source
+    const isPOIDB=S.poTab==='idb',isPOBud=S.poTab==='budel',isPOArn=S.poTab==='arends',isPORFPO=S.poTab==='rfpo';
+    // Get confirmed entries per source
+    const confIDB=S.hrs.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+    const confBud=S.bud.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+    const confArn=S.arn.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+    const confPO=S.pos.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+    // Pick source based on sub-tab
+    const srcData=isPOIDB?confIDB:isPOBud?confBud:isPOArn?confArn:[];
+    const srcRate=isPOIDB?RATE:isPOBud?RATE_BUDEL:isPOArn?RATE_ARENDS:RATE;
+    const srcLabel=isPOIDB?'IDB':isPOBud?'Ing. Budel':isPOArn?'Ing. Arends':'RFPO';
+    // Group hours by month → project → subphase
     const hGroups={};
-    allConfH.forEach(d=>{
+    srcData.forEach(d=>{
       const mo=d.D?d.D.substring(0,7):'unknown';
-      const src=d.id.startsWith('H')?'IDB':d.id.startsWith('B')?'Budel':'Arends';
-      const rate=src==='IDB'?RATE:src==='Budel'?RATE_BUDEL:RATE_ARENDS;
       const pk=d.C||'--';const sk=d.Su||d.B||pk;
-      const key=mo+'|'+pk+'|'+sk+'|'+src;
-      if(!hGroups[key])hGroups[key]={month:mo,source:src,projectCode:pk,projectName:d.M||'',subphase:sk,subName:d.B||'',hours:0,rate:rate,ids:[],prefix:d.X||'ST'};
+      const key=mo+'|'+pk+'|'+sk;
+      if(!hGroups[key])hGroups[key]={month:mo,projectCode:pk,projectName:d.M||'',subphase:sk,subName:d.B||'',hours:0,ids:[],prefix:d.X||'ST'};
       hGroups[key].hours+=d.ah||d.Q;
       hGroups[key].ids.push(d.I);
     });
-    // Group PO requests by month → project
+    // Group PO requests
     const pGroups={};
-    allConfP.forEach(d=>{
+    if(isPORFPO){confPO.forEach(d=>{
       const mo=d.D?d.D.substring(0,7):'unknown';
-      const key='PO|'+mo+'|'+d.PN+'|'+(d.Sp||'--');
+      const key=mo+'|'+d.PN+'|'+(d.Sp||'--');
       if(!pGroups[key])pGroups[key]={month:mo,projectCode:d.PN||'',projectName:d.J||'',subphase:d.Sp||'',subName:d.SD||'',quantity:0,engineer:d.G||'',work:d.W||'',ids:[],company:d.Z||''};
       pGroups[key].quantity+=(d.aq||d.Q);
       pGroups[key].ids.push(d.I);
-    });
+    })}
     // Get unique months
-    const allMonths=[...new Set([...Object.values(hGroups).map(g=>g.month),...Object.values(pGroups).map(g=>g.month)])].sort().reverse();
-    // Filter by selected month
+    const allData=isPORFPO?Object.values(pGroups):Object.values(hGroups);
+    const allMonths=[...new Set(allData.map(g=>g.month))].sort().reverse();
     const moFilter=S.f.mo;
     const filteredMonths=moFilter.length>0?allMonths.filter(m=>moFilter.includes(m)):allMonths;
-    // Month pills
     const moOpts=allMonths.map(m=>{const p=m.split('-');return{v:m,l:MS[+p[1]-1]+' '+p[0]}});
+    // Pending counts per tab
+    const cntIDB=confIDB.length,cntBud=confBud.length,cntArn=confArn.length,cntPO=confPO.length;
     // Build HTML
-    let poHTML='<div class="hd"><div style="display:flex;align-items:center;gap:14px"><img src="'+LOGO_STM+'" style="height:28px;opacity:.9"><div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div><img src="'+LOGO_IDB+'" style="height:26px;border-radius:5px"><h1 style="font-size:15px">Approval Hub</h1></div><div style="display:flex;align-items:center;gap:8px"><button onclick="doRef()" style="background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:11px">\u21BB</button><div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#6D28D9);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff">'+usr.split(' ').map(w=>w[0]).join('')+'</div></div></div>';
-    poHTML+='<div class="tabs"><button class="tab" onclick="swTab(\'hours\')">IDB</button>'+(bFid?'<button class="tab" onclick="swTab(\'budel\')">Ing. Budel</button>':'')+(aFid?'<button class="tab" onclick="swTab(\'arends\')">Ing. Arends</button>':'')+(isFinal?'<button class="tab" onclick="swTab(\'signoff\')">\uD83D\uDD12 Sign-Off</button>':'')+'<button class="tab on" style="border-bottom-color:#059669">\uD83D\uDCCB PO Creation</button>'+(canAdmin?'<button class="tab" onclick="swTab(\'admin\')">\u2699 Admin</button>':'')+'</div>';
-    // Month filter
-    poHTML+='<div style="padding:12px 20px;display:flex;gap:4px;flex-wrap:wrap;align-items:center"><span style="font-size:10px;color:#6B7280;font-weight:600;margin-right:8px">MONTH</span>';
-    moOpts.forEach(m=>{const sel=moFilter.includes(m.v);poHTML+='<button onclick="toggleMo(\''+m.v+'\');event.stopPropagation()" style="padding:4px 12px;border-radius:12px;border:1px solid '+(sel?'#059669':'#D1D5DB')+';background:'+(sel?'#D1FAE5':'#fff')+';font-size:11px;font-weight:'+(sel?'700':'500')+';cursor:pointer;color:'+(sel?'#059669':'#6B7280')+';font-family:inherit">'+m.l+'</button>'});
+    const ini=usr.split(' ').map(w=>w[0]).join('');
+    let poHTML='<div class="hd"><div style="display:flex;align-items:center;gap:14px"><img src="'+LOGO_STM+'" style="height:28px;opacity:.9"><div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div><img src="'+LOGO_IDB+'" style="height:26px;border-radius:5px"><h1 style="font-size:15px">Approval Hub</h1></div><div style="display:flex;align-items:center;gap:8px"><button onclick="doRef()" style="background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:11px">\u21BB</button><div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#6D28D9);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff">'+ini+'</div></div></div>';
+    // Main tabs
+    poHTML+='<div class="tabs"><button class="tab" onclick="swTab(\'hours\')">IDB</button>'+(bFid?'<button class="tab" onclick="swTab(\'budel\')">Ing. Budel</button>':'')+(aFid?'<button class="tab" onclick="swTab(\'arends\')">Ing. Arends</button>':'')+'<button class="tab" onclick="swTab(\'signoff\')">\uD83D\uDD12 Sign-Off</button><button class="tab on" style="border-bottom-color:#059669">\uD83D\uDCCB PO Creation</button>'+(canAdmin?'<button class="tab" onclick="swTab(\'admin\')">\u2699 Admin</button>':'')+'</div>';
+    // Sub-tabs per creditor
+    poHTML+='<div class="subtabs" style="display:flex;background:#F9FAFB;border-bottom:1px solid #E5E7EB">';
+    poHTML+='<button class="subtab '+(isPOIDB?'on':'')+'" onclick="S.poTab=\'idb\';S.f.mo=[];render()" style="'+(isPOIDB?'border-bottom:2px solid #3B82F6;color:#3B82F6':'')+'">IDB Engineering '+(cntIDB?'<span style="background:#3B82F620;color:#3B82F6;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+cntIDB+'</span>':'')+'</button>';
+    poHTML+='<button class="subtab '+(isPOBud?'on':'')+'" onclick="S.poTab=\'budel\';S.f.mo=[];render()" style="'+(isPOBud?'border-bottom:2px solid #8B5CF6;color:#8B5CF6':'')+'">Ing. Budel '+(cntBud?'<span style="background:#8B5CF620;color:#8B5CF6;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+cntBud+'</span>':'')+'</button>';
+    poHTML+='<button class="subtab '+(isPOArn?'on':'')+'" onclick="S.poTab=\'arends\';S.f.mo=[];render()" style="'+(isPOArn?'border-bottom:2px solid #D97706;color:#D97706':'')+'">Ing. Arends '+(cntArn?'<span style="background:#D9770620;color:#D97706;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+cntArn+'</span>':'')+'</button>';
+    poHTML+='<button class="subtab '+(isPORFPO?'on':'')+'" onclick="S.poTab=\'rfpo\';S.f.mo=[];render()" style="'+(isPORFPO?'border-bottom:2px solid #059669;color:#059669':'')+'">RFPO '+(cntPO?'<span style="background:#05966920;color:#059669;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+cntPO+'</span>':'')+'</button>';
     poHTML+='</div>';
-    // Render each month
-    filteredMonths.forEach(mo=>{
-      const moLabel=(()=>{const p=mo.split('-');return MS[+p[1]-1]+' '+p[0]})();
-      const monthHours=Object.values(hGroups).filter(g=>g.month===mo);
-      const monthPOs=Object.values(pGroups).filter(g=>g.month===mo);
-      if(!monthHours.length&&!monthPOs.length)return;
-      poHTML+='<div style="padding:8px 20px"><div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #E5E7EB">'+moLabel+'</div>';
-      // Hours section
-      if(monthHours.length){
+    // Rate info bar
+    if(!isPORFPO){
+      poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span></div><div style="font-size:11px;color:#065F46">Total confirmed: <b>'+srcData.length+'</b> entries \u00b7 <b>'+(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)).toFixed(1)+'h</b> \u00b7 <b>'+eur(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)*srcRate)+'</b></div></div>';
+    }
+    // Month filter
+    if(moOpts.length>0){
+      poHTML+='<div style="padding:10px 20px;display:flex;gap:4px;flex-wrap:wrap;align-items:center"><span style="font-size:10px;color:#6B7280;font-weight:600;margin-right:8px">MONTH</span>';
+      moOpts.forEach(m=>{const sel=moFilter.includes(m.v);poHTML+='<button onclick="toggleMo(\''+m.v+'\');event.stopPropagation()" style="padding:4px 12px;border-radius:12px;border:1px solid '+(sel?'#059669':'#D1D5DB')+';background:'+(sel?'#D1FAE5':'#fff')+';font-size:11px;font-weight:'+(sel?'700':'500')+';cursor:pointer;color:'+(sel?'#059669':'#6B7280')+';font-family:inherit">'+m.l+'</button>'});
+      poHTML+='</div>';
+    }
+    // HOURS tabs (IDB, Budel, Arends)
+    if(!isPORFPO){
+      filteredMonths.forEach(mo=>{
+        const moLabel=(()=>{const p=mo.split('-');return MS[+p[1]-1]+' '+p[0]})();
+        const monthItems=Object.values(hGroups).filter(g=>g.month===mo);
+        if(!monthItems.length)return;
         // Group by project
         const byProj={};
-        monthHours.forEach(g=>{
+        monthItems.forEach(g=>{
           if(!byProj[g.projectCode])byProj[g.projectCode]={name:g.projectName,prefix:g.prefix,subs:[],totalH:0,totalAmt:0};
           byProj[g.projectCode].subs.push(g);
           byProj[g.projectCode].totalH+=g.hours;
-          byProj[g.projectCode].totalAmt+=g.hours*g.rate;
+          byProj[g.projectCode].totalAmt+=g.hours*srcRate;
         });
-        poHTML+='<div style="font-size:9px;color:#6B7280;font-weight:600;text-transform:uppercase;margin-bottom:8px">Hours \u2192 Purchase Orders</div>';
+        poHTML+='<div style="padding:8px 20px"><div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #E5E7EB">'+moLabel+'</div>';
         Object.keys(byProj).sort().forEach(pk=>{
           const proj=byProj[pk];
-          poHTML+='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:8px">';
-          poHTML+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><span style="font-weight:700;font-size:14px;font-family:monospace;color:#4F46E5">'+pk+'</span> <span style="color:#6B7280;font-size:12px">'+proj.name+'</span></div><div style="text-align:right"><div style="font-size:15px;font-weight:700">'+proj.totalH.toFixed(1)+'h</div><div style="font-size:12px;color:#F59E0B;font-weight:600">'+eur(proj.totalAmt)+'</div></div></div>';
-          poHTML+='<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="border-bottom:1px solid #E5E7EB"><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">SUBPHASE</th><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">DESCRIPTION</th><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">SOURCE</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">HOURS</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">RATE</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">AMOUNT</th></tr></thead><tbody>';
-          proj.subs.sort((a,b)=>b.hours-a.hours).forEach(s=>{
-            const srcCol=s.source==='IDB'?'#3B82F6':s.source==='Budel'?'#8B5CF6':'#D97706';
-            poHTML+='<tr style="border-bottom:1px solid #F3F4F6"><td style="padding:6px 8px;font-family:monospace;font-size:11px">'+s.subphase+'</td><td style="padding:6px 8px">'+s.subName+'</td><td style="padding:6px 8px"><span style="background:'+srcCol+'15;color:'+srcCol+';padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">'+s.source+'</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-family:monospace">'+s.hours.toFixed(2)+'</td><td style="padding:6px 8px;text-align:right;color:#6B7280">\u20AC'+s.rate+'</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#059669">'+eur(s.hours*s.rate)+'</td></tr>';
-          });
-          poHTML+='</tbody></table>';
-          // PO number input
-          const gKey='H|'+mo+'|'+pk;
+          const gKey=S.poTab+'|'+mo+'|'+pk;
           const existing=S.poData.find(p=>p.id===gKey);
           const curPO=existing?existing.poNumber:(S.poInputs[gKey]||'');
           const isSent=existing&&existing.status==='PO Sent';
+          poHTML+='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:8px'+(isSent?';border-left:3px solid #059669':'')+'">';
+          poHTML+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><span style="font-weight:700;font-size:14px;font-family:monospace;color:#4F46E5">'+pk+'</span> <span style="color:#6B7280;font-size:12px">'+proj.name+'</span></div><div style="text-align:right"><div style="font-size:16px;font-weight:700">'+proj.totalH.toFixed(1)+'h</div><div style="font-size:13px;color:#F59E0B;font-weight:600">'+eur(proj.totalAmt)+'</div></div></div>';
+          if(proj.subs.length>1||proj.subs[0].subphase!==pk){
+            poHTML+='<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="border-bottom:1px solid #E5E7EB"><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">SUBPHASE</th><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">DESCRIPTION</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">ENTRIES</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">HOURS</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">AMOUNT</th></tr></thead><tbody>';
+            proj.subs.sort((a,b)=>b.hours-a.hours).forEach(s=>{
+              poHTML+='<tr style="border-bottom:1px solid #F3F4F6"><td style="padding:6px 8px;font-family:monospace;font-size:11px">'+s.subphase+'</td><td style="padding:6px 8px">'+s.subName+'</td><td style="padding:6px 8px;text-align:right;color:#6B7280">'+s.ids.length+'</td><td style="padding:6px 8px;text-align:right;font-weight:700;font-family:monospace">'+s.hours.toFixed(2)+'</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#059669">'+eur(s.hours*srcRate)+'</td></tr>';
+            });
+            poHTML+='</tbody></table>';
+          }
+          // PO input
           poHTML+='<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #F3F4F6">';
           if(isSent){
-            poHTML+='<span style="background:#D1FAE5;color:#065F46;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600">\u2713 PO Sent</span><span style="font-family:monospace;font-weight:700;color:#059669;font-size:13px">'+curPO+'</span><span style="font-size:10px;color:#9CA3AF">'+new Date(existing.processedAt).toLocaleDateString('en-GB')+'</span>';
+            poHTML+='<span style="background:#D1FAE5;color:#065F46;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600">\u2713 PO Sent</span><span style="font-family:monospace;font-weight:700;color:#059669;font-size:13px">'+curPO+'</span><span style="font-size:10px;color:#9CA3AF;margin-left:8px">by '+existing.processedBy+' \u00b7 '+new Date(existing.processedAt).toLocaleDateString('en-GB')+'</span>';
           } else {
-            const dataJSON=JSON.stringify({month:mo,source:'mixed',projectCode:pk,projectName:proj.name,subphase:'ALL',subName:'All subphases',hours:proj.totalH,rate:0,amount:proj.totalAmt,entryIds:proj.subs.flatMap(s=>s.ids).join(',')}).replace(/"/g,"&quot;");
-            poHTML+='<input type="text" placeholder="PO Number..." value="'+curPO+'" oninput="setPOInput(\''+gKey+'\',this.value)" style="flex:1;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:monospace;max-width:200px">';
-            poHTML+='<button onclick="createPOGroup(\''+gKey+'\','+dataJSON+')" style="padding:6px 14px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDCCB Save PO</button>';
+            const dataStr=encodeURIComponent(JSON.stringify({month:mo,source:S.poTab,projectCode:pk,projectName:proj.name,subphase:'ALL',subName:'All subphases',hours:proj.totalH,rate:srcRate,amount:proj.totalAmt,entryIds:proj.subs.flatMap(s=>s.ids).join(',')}));
+            poHTML+='<input type="text" placeholder="PO Number (e.g. ST_26xxx_PU)..." value="'+curPO+'" oninput="setPOInput(\''+gKey+'\',this.value)" style="flex:1;padding:7px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:monospace;max-width:220px">';
+            poHTML+='<button onclick="createPOGroup(\''+gKey+'\',JSON.parse(decodeURIComponent(\''+dataStr+'\')))" style="padding:7px 16px;border-radius:6px;border:0;background:linear-gradient(135deg,#059669,#10B981);color:#fff;font-size:11px;font-weight:600;cursor:pointer;box-shadow:0 2px 4px rgba(5,150,105,.3)">\uD83D\uDCCB Save PO</button>';
           }
           poHTML+='</div></div>';
         });
-      }
-      // RFPO section
-      if(monthPOs.length){
-        poHTML+='<div style="font-size:9px;color:#6B7280;font-weight:600;text-transform:uppercase;margin:12px 0 8px">Purchase Order Requests</div>';
-        Object.values(pGroups).filter(g=>g.month===mo).forEach(g=>{
-          const gKey='PO|'+mo+'|'+g.projectCode+'|'+g.subphase;
+        poHTML+='</div>';
+      });
+    }
+    // RFPO tab
+    if(isPORFPO){
+      filteredMonths.forEach(mo=>{
+        const moLabel=(()=>{const p=mo.split('-');return MS[+p[1]-1]+' '+p[0]})();
+        const monthPOs=Object.values(pGroups).filter(g=>g.month===mo);
+        if(!monthPOs.length)return;
+        poHTML+='<div style="padding:8px 20px"><div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #E5E7EB">'+moLabel+'</div>';
+        monthPOs.forEach(g=>{
+          const gKey='rfpo|'+mo+'|'+g.projectCode+'|'+g.subphase;
           const existing=S.poData.find(p=>p.id===gKey);
           const curPO=existing?existing.poNumber:(S.poInputs[gKey]||'');
           const isSent=existing&&existing.status==='PO Sent';
-          poHTML+='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:8px">';
-          poHTML+='<div style="display:flex;justify-content:space-between;align-items:center"><div><span style="font-weight:700;font-family:monospace;color:#8B5CF6">'+g.projectCode+'</span> <span style="color:#6B7280;font-size:12px">'+g.projectName+'</span>'+(g.subphase!=='--'?' <span style="font-family:monospace;font-size:10px;color:#9CA3AF">'+g.subphase+'</span>':'')+'</div><div style="text-align:right"><div style="font-size:15px;font-weight:700">'+g.quantity.toFixed(0)+'h</div></div></div>';
-          poHTML+='<div style="font-size:11px;color:#6B7280;margin-top:4px">Engineer: <b>'+g.engineer+'</b> \u00b7 '+g.work+' \u00b7 '+g.company+'</div>';
+          poHTML+='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:8px'+(isSent?';border-left:3px solid #059669':'')+'">';
+          poHTML+='<div style="display:flex;justify-content:space-between;align-items:center"><div><span style="font-weight:700;font-family:monospace;color:#8B5CF6">'+g.projectCode+'</span> <span style="color:#6B7280;font-size:12px">'+g.projectName+'</span>'+(g.subphase!=='--'?' <span style="font-family:monospace;font-size:10px;color:#9CA3AF;margin-left:4px">'+g.subphase+'</span>':'')+'</div><div style="text-align:right"><div style="font-size:16px;font-weight:700">'+g.quantity.toFixed(0)+'h</div><div style="font-size:13px;color:#F59E0B;font-weight:600">'+eur(g.quantity*RATE)+'</div></div></div>';
+          poHTML+='<div style="font-size:11px;color:#6B7280;margin-top:6px">Engineer: <b>'+g.engineer+'</b> \u00b7 '+g.work+' \u00b7 <span style="color:#9CA3AF">'+g.company+'</span></div>';
           poHTML+='<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #F3F4F6">';
           if(isSent){
-            poHTML+='<span style="background:#D1FAE5;color:#065F46;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600">\u2713 PO Sent</span><span style="font-family:monospace;font-weight:700;color:#059669;font-size:13px">'+curPO+'</span>';
+            poHTML+='<span style="background:#D1FAE5;color:#065F46;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600">\u2713 PO Sent</span><span style="font-family:monospace;font-weight:700;color:#059669;font-size:13px">'+curPO+'</span><span style="font-size:10px;color:#9CA3AF;margin-left:8px">by '+existing.processedBy+' \u00b7 '+new Date(existing.processedAt).toLocaleDateString('en-GB')+'</span>';
           } else {
-            const dataJSON=JSON.stringify({month:mo,source:'RFPO',projectCode:g.projectCode,projectName:g.projectName,subphase:g.subphase,subName:g.subName||'',hours:g.quantity,rate:40,amount:g.quantity*40,entryIds:g.ids.join(',')}).replace(/"/g,"&quot;");
-            poHTML+='<input type="text" placeholder="PO Number..." value="'+curPO+'" oninput="setPOInput(\''+gKey+'\',this.value)" style="flex:1;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:monospace;max-width:200px">';
-            poHTML+='<button onclick="createPOGroup(\''+gKey+'\','+dataJSON+')" style="padding:6px 14px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDCCB Save PO</button>';
+            const dataStr=encodeURIComponent(JSON.stringify({month:mo,source:'rfpo',projectCode:g.projectCode,projectName:g.projectName,subphase:g.subphase,subName:g.subName||'',hours:g.quantity,rate:RATE,amount:g.quantity*RATE,entryIds:g.ids.join(',')}));
+            poHTML+='<input type="text" placeholder="PO Number..." value="'+curPO+'" oninput="setPOInput(\''+gKey+'\',this.value)" style="flex:1;padding:7px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:monospace;max-width:220px">';
+            poHTML+='<button onclick="createPOGroup(\''+gKey+'\',JSON.parse(decodeURIComponent(\''+dataStr+'\')))" style="padding:7px 16px;border-radius:6px;border:0;background:linear-gradient(135deg,#059669,#10B981);color:#fff;font-size:11px;font-weight:600;cursor:pointer;box-shadow:0 2px 4px rgba(5,150,105,.3)">\uD83D\uDCCB Save PO</button>';
           }
           poHTML+='</div></div>';
         });
-      }
-      poHTML+='</div>';
-    });
-    if(!filteredMonths.length||(!Object.keys(hGroups).length&&!Object.keys(pGroups).length)){
-      poHTML+='<div style="padding:60px 20px;text-align:center;color:#9CA3AF"><div style="font-size:14px;font-weight:600">No confirmed entries ready for PO creation</div><div style="font-size:12px;margin-top:4px">Sign off approved entries first in the Sign-Off tab</div></div>';
+        poHTML+='</div>';
+      });
+    }
+    // Empty state
+    if(!filteredMonths.length||!allData.length){
+      poHTML+='<div style="padding:60px 20px;text-align:center;color:#9CA3AF"><div style="font-size:14px;font-weight:600">No confirmed '+srcLabel+' entries ready for PO</div><div style="font-size:12px;margin-top:4px">Sign off approved entries first in the Sign-Off tab</div></div>';
     }
     el.innerHTML=poHTML;return;
   }
