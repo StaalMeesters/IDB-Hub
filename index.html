@@ -305,12 +305,12 @@ async function returnA(it,c){const nw=nowISO();try{await writeR(aFid,C.aSheet,C.
 
 // Reassign
 async function reassign(it,newName){
-  const isH=it.id.startsWith('H')||it.id.startsWith('B');const oldAF=isH?it.AF:it.OB;
+  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A');const oldAF=isH?it.AF:it.OB;
   if(it.id.startsWith('H')){it.AF=newName;await writeR(hFid,C.hSheet,'P'+it.row,[newName])}
   else if(it.id.startsWith('B')){it.AF=newName;await writeR(bFid,C.bSheet,'P'+it.row,[newName])}
   else if(it.id.startsWith('A')){it.AF=newName;await writeR(aFid,C.aSheet,'P'+it.row,[newName])}
   else{it.OB=newName;await writeR(pFid,C.pSheet,'R'+it.row,[newName])}
-  writeNotif('reassign',it.I,isH?'hours':'po','From '+oldAF+' to '+newName);
+  writeNotif('reassign',it.I,it.id.startsWith('H')?'hours':it.id.startsWith('B')?'budel':it.id.startsWith('A')?'arends':'po','From '+oldAF+' to '+newName);
   toast('Reassigned to '+newName,'ok');render();
 }
 
@@ -422,8 +422,8 @@ function renderCmtSB(){const el=document.getElementById('cmtsb'),it=cmtItem;if(!
 
 // Reassign modal
 function showReassignModal(id){
-  const it=[...S.hrs,...S.pos].find(d=>d.id===id);if(!it)return;
-  const isH=it.id.startsWith('H'),cur=isH?it.AF:it.OB;
+  const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;
+  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A'),cur=isH?it.AF:it.OB;
   let h='<div class="modal-ov" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3 style="margin-bottom:12px">Reassign Task #'+it.I+'</h3><p style="font-size:12px;color:#6B7280;margin-bottom:12px">Current: <b>'+cur+'</b></p><div style="display:grid;gap:6px">';
   ASSIGNEES.forEach(a=>{const sel=a===cur;h+='<button onclick="doReassign(\''+id+"','"+a.replace(/'/g,"\\'")+'\')" style="padding:10px 14px;border-radius:8px;border:1px solid '+(sel?'#4F46E5':'#E5E7EB')+';background:'+(sel?'#EEF2FF':'#fff')+';text-align:left;cursor:pointer;font-size:13px;font-family:inherit;font-weight:'+(sel?'700':'400')+'">'+a+(sel?' \u2713':'')+'</button>'});
   h+='</div><button onclick="closeModal()" style="margin-top:12px;padding:8px 16px;border-radius:8px;border:0;background:#F3F4F6;color:#6B7280;cursor:pointer;font-size:12px;width:100%">Cancel</button></div></div>';
@@ -517,9 +517,9 @@ async function sendDigest(){
     body+='</div></div>';
   });
   // Current status summary
-  const hPenAll=S.hrs.filter(d=>d.st==='Pending').length;
+  const hPenAll=[...S.hrs,...S.bud,...S.arn].filter(d=>d.st==='Pending').length;
   const pPenAll=S.pos.filter(d=>d.st==='Pending').length;
-  const hAprAll=S.hrs.filter(d=>d.st==='Approved'||d.st==='Adjusted').length;
+  const hAprAll=[...S.hrs,...S.bud,...S.arn].filter(d=>d.st==='Approved'||d.st==='Adjusted').length;
   const pAprAll=S.pos.filter(d=>d.st==='Approved'||d.st==='Adjusted').length;
   body+='<div style="margin-top:16px;padding:14px;background:#F9FAFB;border-radius:8px;border:1px solid #E5E7EB"><div style="font-weight:700;font-size:13px;margin-bottom:8px">Current Status</div>';
   body+='<div style="font-size:12px;color:#374151">Hours: <b>'+hPenAll+'</b> pending, <b>'+hAprAll+'</b> approved | PO: <b>'+pPenAll+'</b> pending, <b>'+pAprAll+'</b> approved</div></div>';
@@ -539,7 +539,7 @@ window.sendDigest=sendDigest;
 
 // PO SHEET EXPORT
 function exportPOSheet(){
-  const confirmed=S.hrs.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+  const confirmed=[...S.hrs,...S.bud,...S.arn].filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
   if(!confirmed.length){toast('No confirmed hours to export','er');return}
   // Group by Company → Project → Subphase
   const tree={};
@@ -749,7 +749,7 @@ function render(){
   const nActs=canAct?'<button class="ab" style="background:#D1FAE5;color:#065F46" onclick="qA(\''+r.id+'\')" title="Approve">\u2713</button><button class="ab" style="background:#FEE2E2;color:#991B1B" onclick="qR(\''+r.id+'\')" title="Reject">\u2715</button>':'';
   const adminActs=isAD&&canAdmin&&pen?'<button class="ab" style="background:#D1FAE5;color:#065F46" onclick="qA(\''+r.id+'\')" title="Approve">\u2713</button><button class="ab" style="background:#FEE2E2;color:#991B1B" onclick="qR(\''+r.id+'\')" title="Reject">\u2715</button><button class="ab" style="background:#FEF3C7;color:#92400E" onclick="showReassignModal(\''+r.id+'\')" title="Reassign">\uD83D\uDD04</button><button class="ab" style="background:#EDE9FE;color:#6D28D9" onclick="doRemind(\''+r.id+'\')" title="Remind">\uD83D\uDD14</button>':'';
   const acts='<button class="ab" style="background:#EEF2FF;color:#4F46E5" onclick="oDet(\''+r.id+'\')" title="Details">i</button>'+cb+editBtn+soActs+nActs+adminActs;
-  const aprCell=showApr?'<td>'+aprBdg(isH?r.AF:r.OB)+'</td>':'';
+  const aprCell=showApr?'<td>'+aprBdg((isH||isB||isA)?r.AF:r.OB)+'</td>':'';
   const soCell=isAD?'<td>'+((r.fs==='Confirmed'||r.fs==='Returned')?bdg(r.fs):'<span style="color:#ccc;font-size:10px">\u2014</span>')+'</td>':'';
   const adCol=r.ad?'<td style="font-size:10px;color:#6B7280">'+fmtDT(r.ad)+'</td>':'<td style="color:#ddd;font-size:10px">--</td>';
   let cells;if(isH)cells='<td>'+ind+ck+'</td><td style="font-weight:600;color:#6366F1">#'+r.I+'</td><td>'+r.D+'</td><td>'+r.E+'</td><td>'+px(r.X)+'</td><td style="font-family:monospace;font-size:11px;font-weight:600">'+(r.C||'--')+'</td><td><div class="el">'+r.M+'</div></td><td style="font-size:11px;white-space:nowrap">'+(r.Su||'--')+'<div style="font-size:9px;color:#6B7280">'+r.B+'</div></td><td style="font-size:11px;white-space:normal;min-width:200px">'+r.W+'</td><td style="font-family:monospace;font-size:11px">'+r.T+'-'+r.U+'</td><td style="text-align:right;font-weight:700;font-family:monospace;'+(adj?'text-decoration:line-through;color:#aaa':'')+'">'+r.Q.toFixed(2)+'</td><td style="text-align:right;font-family:monospace">'+ahD+'</td>'+adCol+aprCell+soCell+'<td>'+bdg(r.st)+'</td><td><div style="display:flex;gap:2px;flex-wrap:wrap">'+acts+'</div></td>';
@@ -767,7 +767,7 @@ function render(){
   let subTabs='';
   const isIDB=S.tab==='hours'||S.tab==='po';
   if(isIDB&&!isSO&&!isAD){subTabs='<div class="subtabs" style="display:flex"><button class="subtab '+(S.tab==='hours'?'on':'')+'" onclick="swTab(\'hours\')">Hours '+(hPen?'<span style="background:#F59E0B;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+hPen+'</span>':'')+'</button><button class="subtab '+(S.tab==='po'?'on':'')+'" onclick="swTab(\'po\')">Purchase Orders '+(pPen?'<span style="background:#F59E0B;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+pPen+'</span>':'')+'</button></div>'}
-  const hConfirmed=S.hrs.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted')).length;
+  const hConfirmed=[...S.hrs,...S.bud,...S.arn].filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted')).length;
   if(isSO)subTabs='<div class="subtabs" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><button class="subtab '+(S.soTab==='hours'?'on':'')+'" onclick="swSoTab(\'hours\')">IDB Hours '+(hSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+hSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='po'?'on':'')+'" onclick="swSoTab(\'po\')">IDB PO '+(pSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+pSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='budel'?'on':'')+'" onclick="swSoTab(\'budel\')">Budel '+(bSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+bSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='arends'?'on':'')+'" onclick="swSoTab(\'arends\')">Arends '+(aSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+aSO+'</span>':'')+'</button></div>'+(hConfirmed?'<div style="padding:4px 16px"><button onclick="exportPO()" style="padding:5px 14px;border-radius:6px;border:0;background:linear-gradient(135deg,#059669,#10B981);color:#fff;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px">\uD83D\uDCE5 Export PO Sheet <span style="background:rgba(255,255,255,.3);padding:1px 6px;border-radius:8px;font-size:9px">'+hConfirmed+'</span></button></div>':'')+'</div>';
   if(isAD){const ahp=S.hrs.filter(d=>d.st==='Pending').length,app=S.pos.filter(d=>d.st==='Pending').length;const newSince=allNotifs.filter(n=>n.ts>(lastDigestDate||'')&&n.tab!=='budel'&&n.tab!=='arends').length;subTabs='<div class="subtabs" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><button class="subtab ad '+(S.adTab==='hours'?'on':'')+'" onclick="swAdTab(\'hours\')">IDB Hours '+(ahp?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+ahp+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='po'?'on':'')+'" onclick="swAdTab(\'po\')">IDB PO '+(app?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+app+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='budel'?'on':'')+'" onclick="swAdTab(\'budel\')">Budel '+(S.bud.filter(d=>d.st==='Pending').length?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+S.bud.filter(d=>d.st==='Pending').length+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='arends'?'on':'')+'" onclick="swAdTab(\'arends\')">Arends '+(S.arn.filter(d=>d.st==='Pending').length?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+S.arn.filter(d=>d.st==='Pending').length+'</span>':'')+'</button></div><div style="padding:4px 16px;display:flex;align-items:center;gap:8px">'+(lastDigestDate?'<span style="font-size:10px;color:#6B7280">Last digest: '+new Date(lastDigestDate).toLocaleDateString('en-GB')+'</span>':'')+'<button onclick="sendDigest()" style="padding:5px 14px;border-radius:6px;border:0;background:linear-gradient(135deg,#4F46E5,#6366F1);color:#fff;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px">\uD83D\uDCE7 Send Digest'+(newSince?' <span style="background:rgba(255,255,255,.3);padding:1px 6px;border-radius:8px;font-size:9px">'+newSince+'</span>':'')+'</button></div></div>'}
   const aprFilter=showApr&&aprO.length?'<div class="fg"><label>Assignee</label><select class="'+(f.apr!=='All'?'af':'')+'" onchange="setF(\'apr\',this.value)"><option value="All">All</option>'+aprO.map(o=>'<option'+(f.apr===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div>':'';
