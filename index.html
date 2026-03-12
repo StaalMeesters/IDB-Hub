@@ -213,7 +213,7 @@ async function sendRemindEmail(it){
 }
 
 // STATE
-var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],bud:[],arn:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false,projOpen:false};
+var S={phase:'login',tab:'hours',soTab:'hours',adTab:'hours',hrs:[],pos:[],bud:[],arn:[],err:null,f:{st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'},sf:null,sel:new Set(),det:null,adj:0,cmt:'',sortK:'D',sortD:'asc',notifOpen:false,projOpen:false,poData:[],poInputs:{}};
 
 function toast(m,t){const e=document.getElementById('toast');e.textContent=m;e.className='toast show';e.style.background=t==='ok'?'#059669':'#DC2626';setTimeout(()=>e.className='toast',3000)}
 function fmt(v){if(!v)return'';if(typeof v==='object'&&v.toISOString)return v.toISOString().substring(0,10);const s=String(v);if(s.match(/^\d{4}-\d{2}/))return s.substring(0,10);const n=parseFloat(v);if(!isNaN(n)&&n>30000&&n<100000){const d=new Date((n-25569)*86400000);return d.toISOString().substring(0,10)}return s.substring(0,10)}
@@ -276,13 +276,62 @@ async function loadData(){
     }}):[];
     S.phase='app';render();
     // Load extras in background (non-blocking)
-    Promise.all([initSheets(),loadComments(),loadNotifs(),loadDigestDate()]).then(()=>render()).catch(e=>console.warn('extras',e));
+    Promise.all([initSheets(),loadComments(),loadNotifs(),loadDigestDate(),loadPOData()]).then(()=>render()).catch(e=>console.warn('extras',e));
     // Migrate old FinalStatus W→X lazily in background (read already handles both)
     const oldRows=S.hrs.filter(d=>d._old);
     if(oldRows.length){console.log('Migrating '+oldRows.length+' rows in background');
       (async()=>{for(const d of oldRows){try{await writeR(hFid,C.hSheet,'X'+d.row+':Z'+d.row,[d.fs,d.fsb,d.fd]);d._old=false}catch(e){console.error('Migrate row',d.row,e)}}console.log('Migration done')})()}
   }catch(e){S.err=e.message;S.phase='error';console.error(e);render()}
 }
+
+// PO CREATION — Load/Save
+var poSheetOk=false;
+async function loadPOData(){
+  try{
+    const data=await readSheet(hFid,'PurchaseOrders');
+    S.poData=data.map(r=>({id:r[0],created:r[1],month:r[2],source:r[3],projectCode:r[4],projectName:r[5],subphase:r[6],subName:r[7],hours:parseFloat(r[8])||0,rate:parseFloat(r[9])||0,amount:parseFloat(r[10])||0,entryIds:r[11]||'',poNumber:r[12]||'',status:r[13]||'Ready',processedAt:r[14]||'',processedBy:r[15]||''}));
+  }catch(e){S.poData=[];console.log('No PO sheet yet')}
+}
+async function ensurePOSheet(){
+  if(poSheetOk)return;
+  const headers=['ID','Created','Month','Source','ProjectCode','ProjectName','Subphase','SubName','Hours','Rate','Amount','EntryIDs','PONumber','Status','ProcessedAt','ProcessedBy'];
+  await ensureSheet(hFid,'PurchaseOrders',headers);
+  poSheetOk=true;
+}
+async function savePORow(row){
+  await ensurePOSheet();
+  const nextRow=S.poData.length+2;
+  await writeR(hFid,'PurchaseOrders','A'+nextRow+':P'+nextRow,[row.id,row.created,row.month,row.source,row.projectCode,row.projectName,row.subphase,row.subName,row.hours,row.rate,row.amount,row.entryIds,row.poNumber,row.status,row.processedAt,row.processedBy]);
+  S.poData.push(row);
+}
+async function updatePORow(poId,poNumber){
+  const idx=S.poData.findIndex(p=>p.id===poId);
+  if(idx<0)return;
+  const sheetRow=idx+2;
+  const nw=nowISO();
+  await writeR(hFid,'PurchaseOrders','M'+sheetRow+':P'+sheetRow,[poNumber,'PO Sent',nw,usr]);
+  S.poData[idx].poNumber=poNumber;S.poData[idx].status='PO Sent';S.poData[idx].processedAt=nw;S.poData[idx].processedBy=usr;
+}
+window.setPOInput=(key,val)=>{S.poInputs[key]=val};
+window.markPOSent=async(key)=>{
+  const poNum=S.poInputs[key]||'';
+  if(!poNum){toast('Enter PO number first','er');return}
+  // Check if already saved
+  const existing=S.poData.find(p=>p.id===key);
+  if(existing){
+    await updatePORow(key,poNum);
+    toast('PO '+poNum+' saved','ok');render();return;
+  }
+  toast('Save the group first','er');
+};
+window.createPOGroup=async(groupKey,data)=>{
+  // data: {month,source,projectCode,projectName,subphase,subName,hours,rate,amount,entryIds}
+  const poNum=S.poInputs[groupKey]||'';
+  const row={id:groupKey,created:nowISO(),month:data.month,source:data.source,projectCode:data.projectCode,projectName:data.projectName,subphase:data.subphase,subName:data.subName,hours:data.hours,rate:data.rate,amount:data.amount,entryIds:data.entryIds,poNumber:poNum,status:poNum?'PO Sent':'Ready',processedAt:poNum?nowISO():'',processedBy:poNum?usr:''};
+  await savePORow(row);
+  toast('PO group created'+(poNum?' — PO '+poNum:''),'ok');render();
+};
+
 
 // ACTIONS
 async function apH(it,h,c){const a=Math.abs(h-it.Q)>.005,st=a?'Adjusted':'Approved',nw=nowISO();try{await writeR(hFid,C.hSheet,C.hW.st+it.row+':'+C.hW.su+it.row,[st,h,c,usr,nw,'Yes']);it.st=st;it.ah=h;it.cm=c;it.sb=usr;it.ad=nw;S.sf=null;sessionChanges.push({type:'approve',id:it.I,tab:'hours',status:st,hours:h});writeNotif('approve',it.I,'hours',st+' '+h.toFixed(2)+'h'+(c?' — '+c:''));toast(st+' '+h.toFixed(2)+'h','ok');render()}catch(e){toast('Save failed: '+e.message,'er');console.error('apH fail',it.I,e)}}
@@ -329,7 +378,7 @@ async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st
 // FILTERING
 function norm(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim()}
 function isMe(val){if(!val)return false;const v=norm(val),n=norm(usr),m=norm(usrMail.split('@')[0].replace(/\./g,' '));return v===n||v===m||n.includes(v)||v.includes(n)||(m&&(v.includes(m)||m.includes(v)))}
-function curTab(){return S.tab==='signoff'?S.soTab:(S.tab==='admin'?S.adTab:S.tab)}
+function curTab(){return S.tab==='signoff'?S.soTab:(S.tab==='admin'?S.adTab:(S.tab==='pocreate'?'pocreate':S.tab))}
 function myD(){
   const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends';
   if(S.tab==='signoff')return isH?S.hrs.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb):isB?S.bud.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb):isA?S.arn.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb):S.pos.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb);
@@ -380,20 +429,20 @@ function getF(){
   return d.sort((a,b)=>{const k=S.sortK,dir=S.sortD==='asc'?1:-1;let av=a[k],bv=b[k];if(av==null)av='';if(bv==null)bv='';if(typeof av==='number'&&typeof bv==='number')return(av-bv)*dir;return String(av).localeCompare(String(bv))*dir});
 }
 function fO(k){
-  let d=myD();const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends',isHB=isH||isB||isA;
+  let d=myD();const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends',isHB=isH||isB||isA;const f=S.f;
   if(k==='apr'){const fld=isHB?'AF':'OB';return[...new Set(d.map(x=>x[fld]).filter(Boolean))].sort()}
   if(isHB){
     if(k==='co')return[...new Set(d.map(x=>x.X||''))].sort();
-    if(k==='cd')return[...new Set(d.map(x=>x.C||'--'))].sort();
-    if(k==='em')return[...new Set(d.map(x=>x.E))].sort();
-    if(k==='pr')return[...new Set(d.map(x=>x.M))].sort();
+    if(k==='cd'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));return[...new Set(fd.map(x=>x.C||'--'))].sort()}
+    if(k==='em'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));return[...new Set(fd.map(x=>x.E))].sort()}
+    if(k==='pr'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));if(f.cd!=='All')fd=fd.filter(x=>(x.C||'--')===f.cd);return[...new Set(fd.map(x=>x.M))].sort()}
     if(k==='sp'){if(S.f.cd!=='All')d=d.filter(x=>(x.C||'--')===S.f.cd);else if(S.f.pr!=='All')d=d.filter(x=>x.M===S.f.pr);return[...new Set(d.map(x=>x.B||'--'))].sort()}
     if(k==='mo'){const s=new Set();d.forEach(x=>{if(x.D){const p=x.D.split('-');if(p.length>=2)s.add(p[0]+'-'+p[1])}});return[...s].sort().map(y=>{const p=y.split('-');return{v:y,l:MS[+p[1]-1]+' '+p[0]}})}
   }else{
     if(k==='co')return[...new Set(d.map(x=>x.Z))].sort();
-    if(k==='cd')return[...new Set(d.map(x=>x.PN))].sort();
-    if(k==='em')return[...new Set(d.map(x=>x.G))].sort();
-    if(k==='pr')return[...new Set(d.map(x=>x.J))].sort();
+    if(k==='cd'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>x.Z===f.co);return[...new Set(fd.map(x=>x.PN))].sort()}
+    if(k==='em'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>x.Z===f.co);return[...new Set(fd.map(x=>x.G))].sort()}
+    if(k==='pr'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>x.Z===f.co);if(f.cd!=='All')fd=fd.filter(x=>x.PN===f.cd);return[...new Set(fd.map(x=>x.J))].sort()}
     if(k==='sp'){if(S.f.cd!=='All')d=d.filter(x=>x.PN===S.f.cd);else if(S.f.pr!=='All')d=d.filter(x=>x.J===S.f.pr);return[...new Set(d.map(x=>x.SD||'--'))].sort()}
   }
   return[];
@@ -437,7 +486,7 @@ window.doLogin=async()=>{document.getElementById('app').innerHTML='<div class="l
 window.swTab=t=>{S.tab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
 window.swSoTab=t=>{S.soTab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
 window.swAdTab=t=>{S.adTab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
-window.setF=(k,v)=>{S.f[k]=v;const t=curTab();if(t==='hours'||t==='budel'||t==='arends'){if(k==='cd'&&v!=='All'){const m=myD().find(d=>(d.C||'--')===v);if(m)S.f.pr=m.M||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.M===v);if(m)S.f.cd=m.C||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}else{if(k==='cd'&&v!=='All'){const m=myD().find(d=>d.PN===v);if(m)S.f.pr=m.J||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.J===v);if(m)S.f.cd=m.PN||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}render()};
+window.setF=(k,v)=>{S.f[k]=v;const t=curTab();if(t==='hours'||t==='budel'||t==='arends'){if(k==='co'){S.f.cd='All';S.f.pr='All';S.f.sp='All';S.f.em='All'}else if(k==='cd'&&v!=='All'){const m=myD().find(d=>(d.C||'--')===v);if(m)S.f.pr=m.M||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.M===v);if(m)S.f.cd=m.C||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}else{if(k==='co'){S.f.cd='All';S.f.pr='All';S.f.sp='All';S.f.em='All'}else if(k==='cd'&&v!=='All'){const m=myD().find(d=>d.PN===v);if(m)S.f.pr=m.J||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.J===v);if(m)S.f.cd=m.PN||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}render()};
 window.toggleMo=v=>{const a=S.f.mo,i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);render()};
 window.doSort=k=>{if(S.sortK===k)S.sortD=S.sortD==='asc'?'desc':'asc';else{S.sortK=k;S.sortD='asc'}render()};
 window.cSt=k=>{S.sf=S.sf===k?null:k;S.f.st='All';render()};
@@ -761,6 +810,118 @@ function render(){
   const soTh=isAD?sth('Sign-Off','fs'):'';
   const thR=(isH)?'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Employee','E')+sth('Co','X')+sth('Code','C')+sth('Project','M')+sth('Sub#','Su')+sth('Sub','B')+sth('Task','W')+sth('Time','T')+sth('Req','Q',1)+sth('Appr','ah',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>':(isB||isA)?'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Co','X')+sth('Code','C')+sth('Project','M')+sth('Sub#','Su')+sth('Sub','B')+sth('Task','W')+sth('Req','Q',1)+sth('Appr','ah',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>':'<th style="width:30px"><input type="checkbox" onchange="tAll()"></th>'+sth('ID','I')+sth('Date','D')+sth('Company','Z')+sth('Proj#','PN')+sth('Desc','J')+sth('Sub#','Sp')+sth('Sub','SD')+sth('Engineer','G')+sth('Type','W')+sth('Timeline','F')+sth('Req','Q',1)+sth('Appr','aq',1)+sth('Appr.Date','ad')+aprTh+soTh+sth('Status','st')+'<th>Act</th>';
   let np='';if(S.notifOpen){np='<div class="notif-panel"><div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;font-weight:700;font-size:13px;display:flex;justify-content:space-between">Notifications<button onclick="tNotif()" style="background:0;border:0;cursor:pointer;color:#aaa;font-size:16px">\u2715</button></div>';if(!allNotifs.length)np+='<div style="padding:30px;text-align:center;color:#aaa;font-size:12px">No notifications</div>';allNotifs.slice(0,30).forEach(n=>{const ic=n.action==='approve'?'\u2705':n.action==='reject'?'\u274C':n.action==='confirm'?'\uD83D\uDD12':n.action==='return'?'\u21A9':n.action==='reassign'?'\uD83D\uDD04':n.action==='remind'?'\uD83D\uDD14':'\uD83D\uDCAC';const d=new Date(n.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});np+='<div style="padding:10px 16px;border-bottom:1px solid #F3F4F6;font-size:12px">'+ic+' <b>'+n.actor+'</b> '+n.action+' #'+n.rowId+'<div style="color:#6B7280;font-size:10px;margin-top:2px">'+n.details+' \u00b7 '+ts+'</div></div>'});np+='</div>'}
+  // PO CREATION TAB RENDERING
+  if(S.tab==='pocreate'&&isFinal){
+    const allConfH=[...S.hrs,...S.bud,...S.arn].filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+    const allConfP=S.pos.filter(d=>d.fs==='Confirmed'&&(d.st==='Approved'||d.st==='Adjusted'));
+    // Group hours by month → project → subphase → source
+    const hGroups={};
+    allConfH.forEach(d=>{
+      const mo=d.D?d.D.substring(0,7):'unknown';
+      const src=d.id.startsWith('H')?'IDB':d.id.startsWith('B')?'Budel':'Arends';
+      const rate=src==='IDB'?RATE:src==='Budel'?RATE_BUDEL:RATE_ARENDS;
+      const pk=d.C||'--';const sk=d.Su||d.B||pk;
+      const key=mo+'|'+pk+'|'+sk+'|'+src;
+      if(!hGroups[key])hGroups[key]={month:mo,source:src,projectCode:pk,projectName:d.M||'',subphase:sk,subName:d.B||'',hours:0,rate:rate,ids:[],prefix:d.X||'ST'};
+      hGroups[key].hours+=d.ah||d.Q;
+      hGroups[key].ids.push(d.I);
+    });
+    // Group PO requests by month → project
+    const pGroups={};
+    allConfP.forEach(d=>{
+      const mo=d.D?d.D.substring(0,7):'unknown';
+      const key='PO|'+mo+'|'+d.PN+'|'+(d.Sp||'--');
+      if(!pGroups[key])pGroups[key]={month:mo,projectCode:d.PN||'',projectName:d.J||'',subphase:d.Sp||'',subName:d.SD||'',quantity:0,engineer:d.G||'',work:d.W||'',ids:[],company:d.Z||''};
+      pGroups[key].quantity+=(d.aq||d.Q);
+      pGroups[key].ids.push(d.I);
+    });
+    // Get unique months
+    const allMonths=[...new Set([...Object.values(hGroups).map(g=>g.month),...Object.values(pGroups).map(g=>g.month)])].sort().reverse();
+    // Filter by selected month
+    const moFilter=S.f.mo;
+    const filteredMonths=moFilter.length>0?allMonths.filter(m=>moFilter.includes(m)):allMonths;
+    // Month pills
+    const moOpts=allMonths.map(m=>{const p=m.split('-');return{v:m,l:MS[+p[1]-1]+' '+p[0]}});
+    // Build HTML
+    let poHTML='<div class="hd"><div style="display:flex;align-items:center;gap:14px"><img src="'+LOGO_STM+'" style="height:28px;opacity:.9"><div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div><img src="'+LOGO_IDB+'" style="height:26px;border-radius:5px"><h1 style="font-size:15px">Approval Hub</h1></div><div style="display:flex;align-items:center;gap:8px"><button onclick="doRef()" style="background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:11px">\u21BB</button><div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#6D28D9);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff">'+usr.split(' ').map(w=>w[0]).join('')+'</div></div></div>';
+    poHTML+='<div class="tabs"><button class="tab" onclick="swTab(\'hours\')">IDB</button>'+(bFid?'<button class="tab" onclick="swTab(\'budel\')">Ing. Budel</button>':'')+(aFid?'<button class="tab" onclick="swTab(\'arends\')">Ing. Arends</button>':'')+(isFinal?'<button class="tab" onclick="swTab(\'signoff\')">\uD83D\uDD12 Sign-Off</button>':'')+'<button class="tab on" style="border-bottom-color:#059669">\uD83D\uDCCB PO Creation</button>'+(canAdmin?'<button class="tab" onclick="swTab(\'admin\')">\u2699 Admin</button>':'')+'</div>';
+    // Month filter
+    poHTML+='<div style="padding:12px 20px;display:flex;gap:4px;flex-wrap:wrap;align-items:center"><span style="font-size:10px;color:#6B7280;font-weight:600;margin-right:8px">MONTH</span>';
+    moOpts.forEach(m=>{const sel=moFilter.includes(m.v);poHTML+='<button onclick="toggleMo(\''+m.v+'\');event.stopPropagation()" style="padding:4px 12px;border-radius:12px;border:1px solid '+(sel?'#059669':'#D1D5DB')+';background:'+(sel?'#D1FAE5':'#fff')+';font-size:11px;font-weight:'+(sel?'700':'500')+';cursor:pointer;color:'+(sel?'#059669':'#6B7280')+';font-family:inherit">'+m.l+'</button>'});
+    poHTML+='</div>';
+    // Render each month
+    filteredMonths.forEach(mo=>{
+      const moLabel=(()=>{const p=mo.split('-');return MS[+p[1]-1]+' '+p[0]})();
+      const monthHours=Object.values(hGroups).filter(g=>g.month===mo);
+      const monthPOs=Object.values(pGroups).filter(g=>g.month===mo);
+      if(!monthHours.length&&!monthPOs.length)return;
+      poHTML+='<div style="padding:8px 20px"><div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #E5E7EB">'+moLabel+'</div>';
+      // Hours section
+      if(monthHours.length){
+        // Group by project
+        const byProj={};
+        monthHours.forEach(g=>{
+          if(!byProj[g.projectCode])byProj[g.projectCode]={name:g.projectName,prefix:g.prefix,subs:[],totalH:0,totalAmt:0};
+          byProj[g.projectCode].subs.push(g);
+          byProj[g.projectCode].totalH+=g.hours;
+          byProj[g.projectCode].totalAmt+=g.hours*g.rate;
+        });
+        poHTML+='<div style="font-size:9px;color:#6B7280;font-weight:600;text-transform:uppercase;margin-bottom:8px">Hours \u2192 Purchase Orders</div>';
+        Object.keys(byProj).sort().forEach(pk=>{
+          const proj=byProj[pk];
+          poHTML+='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:8px">';
+          poHTML+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><span style="font-weight:700;font-size:14px;font-family:monospace;color:#4F46E5">'+pk+'</span> <span style="color:#6B7280;font-size:12px">'+proj.name+'</span></div><div style="text-align:right"><div style="font-size:15px;font-weight:700">'+proj.totalH.toFixed(1)+'h</div><div style="font-size:12px;color:#F59E0B;font-weight:600">'+eur(proj.totalAmt)+'</div></div></div>';
+          poHTML+='<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="border-bottom:1px solid #E5E7EB"><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">SUBPHASE</th><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">DESCRIPTION</th><th style="text-align:left;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">SOURCE</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">HOURS</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">RATE</th><th style="text-align:right;padding:4px 8px;color:#6B7280;font-size:10px;font-weight:600">AMOUNT</th></tr></thead><tbody>';
+          proj.subs.sort((a,b)=>b.hours-a.hours).forEach(s=>{
+            const srcCol=s.source==='IDB'?'#3B82F6':s.source==='Budel'?'#8B5CF6':'#D97706';
+            poHTML+='<tr style="border-bottom:1px solid #F3F4F6"><td style="padding:6px 8px;font-family:monospace;font-size:11px">'+s.subphase+'</td><td style="padding:6px 8px">'+s.subName+'</td><td style="padding:6px 8px"><span style="background:'+srcCol+'15;color:'+srcCol+';padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">'+s.source+'</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-family:monospace">'+s.hours.toFixed(2)+'</td><td style="padding:6px 8px;text-align:right;color:#6B7280">\u20AC'+s.rate+'</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#059669">'+eur(s.hours*s.rate)+'</td></tr>';
+          });
+          poHTML+='</tbody></table>';
+          // PO number input
+          const gKey='H|'+mo+'|'+pk;
+          const existing=S.poData.find(p=>p.id===gKey);
+          const curPO=existing?existing.poNumber:(S.poInputs[gKey]||'');
+          const isSent=existing&&existing.status==='PO Sent';
+          poHTML+='<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #F3F4F6">';
+          if(isSent){
+            poHTML+='<span style="background:#D1FAE5;color:#065F46;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600">\u2713 PO Sent</span><span style="font-family:monospace;font-weight:700;color:#059669;font-size:13px">'+curPO+'</span><span style="font-size:10px;color:#9CA3AF">'+new Date(existing.processedAt).toLocaleDateString('en-GB')+'</span>';
+          } else {
+            const dataJSON=JSON.stringify({month:mo,source:'mixed',projectCode:pk,projectName:proj.name,subphase:'ALL',subName:'All subphases',hours:proj.totalH,rate:0,amount:proj.totalAmt,entryIds:proj.subs.flatMap(s=>s.ids).join(',')}).replace(/"/g,"&quot;");
+            poHTML+='<input type="text" placeholder="PO Number..." value="'+curPO+'" oninput="setPOInput(\''+gKey+'\',this.value)" style="flex:1;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:monospace;max-width:200px">';
+            poHTML+='<button onclick="createPOGroup(\''+gKey+'\','+dataJSON+')" style="padding:6px 14px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDCCB Save PO</button>';
+          }
+          poHTML+='</div></div>';
+        });
+      }
+      // RFPO section
+      if(monthPOs.length){
+        poHTML+='<div style="font-size:9px;color:#6B7280;font-weight:600;text-transform:uppercase;margin:12px 0 8px">Purchase Order Requests</div>';
+        Object.values(pGroups).filter(g=>g.month===mo).forEach(g=>{
+          const gKey='PO|'+mo+'|'+g.projectCode+'|'+g.subphase;
+          const existing=S.poData.find(p=>p.id===gKey);
+          const curPO=existing?existing.poNumber:(S.poInputs[gKey]||'');
+          const isSent=existing&&existing.status==='PO Sent';
+          poHTML+='<div style="background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;margin-bottom:8px">';
+          poHTML+='<div style="display:flex;justify-content:space-between;align-items:center"><div><span style="font-weight:700;font-family:monospace;color:#8B5CF6">'+g.projectCode+'</span> <span style="color:#6B7280;font-size:12px">'+g.projectName+'</span>'+(g.subphase!=='--'?' <span style="font-family:monospace;font-size:10px;color:#9CA3AF">'+g.subphase+'</span>':'')+'</div><div style="text-align:right"><div style="font-size:15px;font-weight:700">'+g.quantity.toFixed(0)+'h</div></div></div>';
+          poHTML+='<div style="font-size:11px;color:#6B7280;margin-top:4px">Engineer: <b>'+g.engineer+'</b> \u00b7 '+g.work+' \u00b7 '+g.company+'</div>';
+          poHTML+='<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #F3F4F6">';
+          if(isSent){
+            poHTML+='<span style="background:#D1FAE5;color:#065F46;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600">\u2713 PO Sent</span><span style="font-family:monospace;font-weight:700;color:#059669;font-size:13px">'+curPO+'</span>';
+          } else {
+            const dataJSON=JSON.stringify({month:mo,source:'RFPO',projectCode:g.projectCode,projectName:g.projectName,subphase:g.subphase,subName:g.subName||'',hours:g.quantity,rate:40,amount:g.quantity*40,entryIds:g.ids.join(',')}).replace(/"/g,"&quot;");
+            poHTML+='<input type="text" placeholder="PO Number..." value="'+curPO+'" oninput="setPOInput(\''+gKey+'\',this.value)" style="flex:1;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:monospace;max-width:200px">';
+            poHTML+='<button onclick="createPOGroup(\''+gKey+'\','+dataJSON+')" style="padding:6px 14px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDCCB Save PO</button>';
+          }
+          poHTML+='</div></div>';
+        });
+      }
+      poHTML+='</div>';
+    });
+    if(!filteredMonths.length||(!Object.keys(hGroups).length&&!Object.keys(pGroups).length)){
+      poHTML+='<div style="padding:60px 20px;text-align:center;color:#9CA3AF"><div style="font-size:14px;font-weight:600">No confirmed entries ready for PO creation</div><div style="font-size:12px;margin-top:4px">Sign off approved entries first in the Sign-Off tab</div></div>';
+    }
+    el.innerHTML=poHTML;return;
+  }
   const snBtn='';
   const reqH=fi.reduce((s,d)=>s+d.Q,0),aprH2=fi.filter(d=>(isH?d.ah:d.aq)!=null&&d.st!=='Rejected'&&d.st!=='Disapproved').reduce((s,d)=>s+((isH?d.ah:d.aq)||0),0);
   const roleLabel=isFinal?'Final Approver':(isSenior?'Senior Approver':(isAdmin?'IDB Admin':'Approver')),roleColor=isFinal?'#8B5CF6,#6D28D9':(isSenior?'#D97706,#B45309':(isAdmin?'#F59E0B,#D97706':'#3B82F6,#6366F1'));
@@ -771,7 +932,7 @@ function render(){
   if(isSO)subTabs='<div class="subtabs" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><button class="subtab '+(S.soTab==='hours'?'on':'')+'" onclick="swSoTab(\'hours\')">IDB Hours '+(hSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+hSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='po'?'on':'')+'" onclick="swSoTab(\'po\')">IDB PO '+(pSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+pSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='budel'?'on':'')+'" onclick="swSoTab(\'budel\')">Budel '+(bSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+bSO+'</span>':'')+'</button><button class="subtab '+(S.soTab==='arends'?'on':'')+'" onclick="swSoTab(\'arends\')">Arends '+(aSO?'<span style="background:#8B5CF6;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+aSO+'</span>':'')+'</button></div>'+(hConfirmed?'<div style="padding:4px 16px"><button onclick="exportPO()" style="padding:5px 14px;border-radius:6px;border:0;background:linear-gradient(135deg,#059669,#10B981);color:#fff;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px">\uD83D\uDCE5 Export PO Sheet <span style="background:rgba(255,255,255,.3);padding:1px 6px;border-radius:8px;font-size:9px">'+hConfirmed+'</span></button></div>':'')+'</div>';
   if(isAD){const ahp=S.hrs.filter(d=>d.st==='Pending').length,app=S.pos.filter(d=>d.st==='Pending').length;const newSince=allNotifs.filter(n=>n.ts>(lastDigestDate||'')&&n.tab!=='budel'&&n.tab!=='arends').length;subTabs='<div class="subtabs" style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><button class="subtab ad '+(S.adTab==='hours'?'on':'')+'" onclick="swAdTab(\'hours\')">IDB Hours '+(ahp?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+ahp+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='po'?'on':'')+'" onclick="swAdTab(\'po\')">IDB PO '+(app?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+app+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='budel'?'on':'')+'" onclick="swAdTab(\'budel\')">Budel '+(S.bud.filter(d=>d.st==='Pending').length?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+S.bud.filter(d=>d.st==='Pending').length+'</span>':'')+'</button><button class="subtab ad '+(S.adTab==='arends'?'on':'')+'" onclick="swAdTab(\'arends\')">Arends '+(S.arn.filter(d=>d.st==='Pending').length?'<span style="background:#D97706;color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+S.arn.filter(d=>d.st==='Pending').length+'</span>':'')+'</button></div><div style="padding:4px 16px;display:flex;align-items:center;gap:8px">'+(lastDigestDate?'<span style="font-size:10px;color:#6B7280">Last digest: '+new Date(lastDigestDate).toLocaleDateString('en-GB')+'</span>':'')+'<button onclick="sendDigest()" style="padding:5px 14px;border-radius:6px;border:0;background:linear-gradient(135deg,#4F46E5,#6366F1);color:#fff;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px">\uD83D\uDCE7 Send Digest'+(newSince?' <span style="background:rgba(255,255,255,.3);padding:1px 6px;border-radius:8px;font-size:9px">'+newSince+'</span>':'')+'</button></div></div>'}
   const aprFilter=showApr&&aprO.length?'<div class="fg"><label>Assignee</label><select class="'+(f.apr!=='All'?'af':'')+'" onchange="setF(\'apr\',this.value)"><option value="All">All</option>'+aprO.map(o=>'<option'+(f.apr===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div>':'';
-  el.innerHTML='<div class="hd"><div style="display:flex;align-items:center;gap:14px"><img src="'+LOGO_STM+'" style="height:28px;opacity:.9"><div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div><img src="'+LOGO_IDB+'" style="height:26px;border-radius:5px"><h1 style="font-size:15px">Approval Hub</h1></div><div style="display:flex;align-items:center;gap:8px">'+snBtn+'<button onclick="doRef()" style="background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:11px">\u21BB</button><div style="position:relative"><button style="position:relative;background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px" onclick="tNotif()">\uD83D\uDD14'+(allNotifs.length?'<span style="position:absolute;top:-4px;right:-4px;background:#EF4444;color:#fff;font-size:9px;font-weight:700;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center">'+Math.min(allNotifs.length,99)+'</span>':'')+'</button>'+np+'</div><div class="umenu"><div style="display:flex;align-items:center;gap:8px;padding:4px 0"><div style="text-align:right"><div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase">'+roleLabel+'</div><div style="font-size:12px;font-weight:600">'+usr+'</div></div><div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,'+roleColor+');display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+ini+'</div></div><div class="udrop"><a href="#">\uD83D\uDC64 '+usr+'</a><a href="#" onclick="doSignOut();return false">\u2715 Sign out</a></div></div></div></div>'+'<div class="tabs"><button class="tab '+((S.tab==='hours'||S.tab==='po')?'on':'')+'" onclick="swTab(\'hours\')">IDB '+((hPen+pPen)?'<span class="tbg">'+(hPen+pPen)+'</span>':'')+'</button>'+(bFid?'<button class="tab '+(S.tab==='budel'?'on':'')+'" onclick="swTab(\'budel\')">Ing. Budel '+(bPen?'<span class="tbg">'+bPen+'</span>':'')+'</button>':'')+(aFid?'<button class="tab '+(S.tab==='arends'?'on':'')+'" onclick="swTab(\'arends\')">Ing. Arends '+(aPen?'<span class="tbg">'+aPen+'</span>':'')+'</button>':'')+(isFinal?'<button class="tab '+(S.tab==='signoff'?'on':'')+'" onclick="swTab(\'signoff\')" style="'+(isSO?'border-bottom-color:#8B5CF6':'')+'">\uD83D\uDD12 Sign-Off '+(soTotal?'<span class="tbg so">'+soTotal+'</span>':'')+'</button>':'')+(canAdmin?'<button class="tab '+(S.tab==='admin'?'on':'')+'" onclick="swTab(\'admin\')" style="'+(isAD?'border-bottom-color:#D97706':'')+'">\u2699 Admin '+(adPen?'<span class="tbg ad">'+adPen+'</span>':'')+'</button>':'')+'</div>'+subTabs+'<div class="sts" style="grid-template-columns:repeat('+stA.length+',1fr)">'+stA.map(s=>'<div class="st '+(S.sf===s.k||(s.k===null&&!S.sf)?'on':'')+'" style="--ac:'+s.a+'" onclick="cSt('+(s.k?"\'"+s.k+"\'":"null")+')"><div class="sl">'+s.l+'</div><div class="sv">'+s.v+' entries</div><div class="sa">'+eur(s.hrs*curRate)+'</div><div class="sh2">'+s.hrs.toFixed((isH||isB||isA)?1:0)+'h</div><div style="font-size:9px;color:'+(S.sf===s.k||(s.k===null&&!S.sf)?'rgba(255,255,255,.6)':'#9CA3AF')+';margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+filterLabel+'</div></div>').join('')+'</div>'+projBars+pc+'<div class="fb">'+((isH||isB||isA)?'<div class="fg" style="flex-basis:100%;margin-bottom:2px"><label>Month</label><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">'+mO.map(m=>{const sel=f.mo.includes(m.v);return'<button onclick="toggleMo(\''+m.v+'\');event.stopPropagation()" style="padding:3px 10px;border-radius:12px;border:1px solid '+(sel?'#4F46E5':'#D1D5DB')+';background:'+(sel?'#EEF2FF':'#fff')+';font-size:11px;font-weight:'+(sel?'700':'500')+';cursor:pointer;color:'+(sel?'#4F46E5':'#6B7280')+';font-family:inherit;transition:all .15s">'+m.l+'</button>'}).join('')+'</div></div>':'')+'<div class="fg"><label>Company</label><select class="'+(f.co!=='All'?'af':'')+'" onchange="setF(\'co\',this.value)"><option value="All">All</option>'+cO.map(o=>'<option value="'+(o||'None')+'"'+(f.co===(o||'None')?' selected':'')+'>'+(o||'None')+'</option>').join('')+'</select></div><div class="fg"><label>'+((isH||isB||isA)?'Code':'Proj#')+'</label><select class="'+(f.cd!=='All'?'af':'')+'" onchange="setF(\'cd\',this.value)"><option value="All">All</option>'+cdO.map(o=>'<option value="'+o+'"'+(f.cd===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>Project</label><select class="'+(f.pr!=='All'?'af':'')+'" onchange="setF(\'pr\',this.value)" style="max-width:160px"><option value="All">All</option>'+pO.map(o=>'<option'+(f.pr===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>'+((isH||isB||isA)?'Subphase':'Sub')+'</label><select class="'+(f.sp!=='All'?'af':'')+'" onchange="setF(\'sp\',this.value)" style="max-width:140px"><option value="All">All</option>'+spO.map(o=>'<option value="'+o+'"'+(f.sp===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>'+((isH||isB||isA)?'Employee':'Engineer')+'</label><select class="'+(f.em!=='All'?'af':'')+'" onchange="setF(\'em\',this.value)" style="min-width:100px"><option value="All">All</option>'+eO.map(o=>'<option'+(f.em===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>Status</label><select class="'+(es!=='All'?'af':'')+'" onchange="setF(\'st\',this.value);S.sf=null"><option value="All">All</option>'+sts.map(o=>'<option'+(es===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div>'+aprFilter+'<button onclick="tCmt()" style="padding:5px 10px;border-radius:6px;border:1px solid '+(f.cmt?'#3B82F6':'#D1D5DB')+';background:'+(f.cmt?'#DBEAFE':'#fff')+';font-size:10px;font-weight:600;cursor:pointer;color:'+(f.cmt?'#1E40AF':'#6B7280')+'">\uD83D\uDCAC Comments</button>'+(anyF?'<button onclick="resF()" style="padding:5px 8px;border-radius:6px;border:0;background:#FEE2E2;color:#991B1B;font-size:10px;font-weight:600;cursor:pointer">Reset</button>':'')+'</div>'+(selP&&!isAdmin?(isSO?'<div style="padding:6px 20px 0;display:flex;gap:6px;align-items:center;font-size:11px;color:#888">'+selP+' selected <button onclick="doBConfirm()" style="padding:5px 12px;border-radius:6px;border:0;background:#8B5CF6;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDD12 Confirm All</button></div>':'<div style="padding:6px 20px 0;display:flex;gap:6px;align-items:center;font-size:11px;color:#888">'+selP+' selected <button onclick="doB()" style="padding:5px 12px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">Approve All</button></div>'):'')+'<div style="padding:10px 20px 20px"><div style="background:#fff;border-radius:10px;border:1px solid #E5E7EB;overflow:hidden"><div style="overflow-x:auto"><table><thead><tr>'+thR+'</tr></thead><tbody>'+rows+'</tbody></table></div><div style="padding:12px 16px;border-top:2px solid #E5E7EB;background:#F9FAFB;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:#6B7280">'+fi.length+' of '+md.length+'</span><div style="display:flex;gap:20px"><div style="text-align:right"><div style="font-size:9px;color:#6B7280;text-transform:uppercase;font-weight:600">Requested</div><div style="font-weight:800;font-family:monospace;color:#111">'+reqH.toFixed((isH||isB||isA)?2:0)+'h \u00b7 <span style="color:#F59E0B">'+eur(reqH*curRate)+'</span></div></div><div style="text-align:right"><div style="font-size:9px;color:#059669;text-transform:uppercase;font-weight:600">Approved</div><div style="font-weight:800;font-family:monospace;color:#059669">'+aprH2.toFixed((isH||isB||isA)?2:0)+'h \u00b7 '+eur(aprH2*curRate)+'</div></div></div></div></div></div>'+'<div id="ov" class="ov '+(S.det?'open':'')+'" onclick="cDet()"><div class="sb" onclick="event.stopPropagation()"><div style="padding:20px 22px" id="sbc"></div></div></div>';
+  el.innerHTML='<div class="hd"><div style="display:flex;align-items:center;gap:14px"><img src="'+LOGO_STM+'" style="height:28px;opacity:.9"><div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div><img src="'+LOGO_IDB+'" style="height:26px;border-radius:5px"><h1 style="font-size:15px">Approval Hub</h1></div><div style="display:flex;align-items:center;gap:8px">'+snBtn+'<button onclick="doRef()" style="background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:11px">\u21BB</button><div style="position:relative"><button style="position:relative;background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:16px" onclick="tNotif()">\uD83D\uDD14'+(allNotifs.length?'<span style="position:absolute;top:-4px;right:-4px;background:#EF4444;color:#fff;font-size:9px;font-weight:700;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center">'+Math.min(allNotifs.length,99)+'</span>':'')+'</button>'+np+'</div><div class="umenu"><div style="display:flex;align-items:center;gap:8px;padding:4px 0"><div style="text-align:right"><div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase">'+roleLabel+'</div><div style="font-size:12px;font-weight:600">'+usr+'</div></div><div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,'+roleColor+');display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+ini+'</div></div><div class="udrop"><a href="#">\uD83D\uDC64 '+usr+'</a><a href="#" onclick="doSignOut();return false">\u2715 Sign out</a></div></div></div></div>'+'<div class="tabs"><button class="tab '+((S.tab==='hours'||S.tab==='po')?'on':'')+'" onclick="swTab(\'hours\')">IDB '+((hPen+pPen)?'<span class="tbg">'+(hPen+pPen)+'</span>':'')+'</button>'+(bFid?'<button class="tab '+(S.tab==='budel'?'on':'')+'" onclick="swTab(\'budel\')">Ing. Budel '+(bPen?'<span class="tbg">'+bPen+'</span>':'')+'</button>':'')+(aFid?'<button class="tab '+(S.tab==='arends'?'on':'')+'" onclick="swTab(\'arends\')">Ing. Arends '+(aPen?'<span class="tbg">'+aPen+'</span>':'')+'</button>':'')+(isFinal?'<button class="tab '+(S.tab==='signoff'?'on':'')+'" onclick="swTab(\'signoff\')" style="'+(isSO?'border-bottom-color:#8B5CF6':'')+'">\uD83D\uDD12 Sign-Off '+(soTotal?'<span class="tbg so">'+soTotal+'</span>':'')+'</button>':'')+(isFinal?'<button class="tab '+(S.tab==='pocreate'?'on':'')+'" onclick="swTab(\'pocreate\')" style="'+(S.tab==='pocreate'?'border-bottom-color:#059669':'')+'">\uD83D\uDCCB PO Creation</button>':'')+(canAdmin?'<button class="tab '+(S.tab==='admin'?'on':'')+'" onclick="swTab(\'admin\')" style="'+(isAD?'border-bottom-color:#D97706':'')+'">\u2699 Admin '+(adPen?'<span class="tbg ad">'+adPen+'</span>':'')+'</button>':'')+'</div>'+subTabs+'<div class="sts" style="grid-template-columns:repeat('+stA.length+',1fr)">'+stA.map(s=>'<div class="st '+(S.sf===s.k||(s.k===null&&!S.sf)?'on':'')+'" style="--ac:'+s.a+'" onclick="cSt('+(s.k?"\'"+s.k+"\'":"null")+')"><div class="sl">'+s.l+'</div><div class="sv">'+s.v+' entries</div><div class="sa">'+eur(s.hrs*curRate)+'</div><div class="sh2">'+s.hrs.toFixed((isH||isB||isA)?1:0)+'h</div><div style="font-size:9px;color:'+(S.sf===s.k||(s.k===null&&!S.sf)?'rgba(255,255,255,.6)':'#9CA3AF')+';margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+filterLabel+'</div></div>').join('')+'</div>'+projBars+pc+'<div class="fb">'+((isH||isB||isA)?'<div class="fg" style="flex-basis:100%;margin-bottom:2px"><label>Month</label><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">'+mO.map(m=>{const sel=f.mo.includes(m.v);return'<button onclick="toggleMo(\''+m.v+'\');event.stopPropagation()" style="padding:3px 10px;border-radius:12px;border:1px solid '+(sel?'#4F46E5':'#D1D5DB')+';background:'+(sel?'#EEF2FF':'#fff')+';font-size:11px;font-weight:'+(sel?'700':'500')+';cursor:pointer;color:'+(sel?'#4F46E5':'#6B7280')+';font-family:inherit;transition:all .15s">'+m.l+'</button>'}).join('')+'</div></div>':'')+'<div class="fg"><label>Company</label><select class="'+(f.co!=='All'?'af':'')+'" onchange="setF(\'co\',this.value)"><option value="All">All</option>'+cO.map(o=>'<option value="'+(o||'None')+'"'+(f.co===(o||'None')?' selected':'')+'>'+(o||'None')+'</option>').join('')+'</select></div><div class="fg"><label>'+((isH||isB||isA)?'Code':'Proj#')+'</label><select class="'+(f.cd!=='All'?'af':'')+'" onchange="setF(\'cd\',this.value)"><option value="All">All</option>'+cdO.map(o=>'<option value="'+o+'"'+(f.cd===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>Project</label><select class="'+(f.pr!=='All'?'af':'')+'" onchange="setF(\'pr\',this.value)" style="max-width:160px"><option value="All">All</option>'+pO.map(o=>'<option'+(f.pr===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>'+((isH||isB||isA)?'Subphase':'Sub')+'</label><select class="'+(f.sp!=='All'?'af':'')+'" onchange="setF(\'sp\',this.value)" style="max-width:140px"><option value="All">All</option>'+spO.map(o=>'<option value="'+o+'"'+(f.sp===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>'+((isH||isB||isA)?'Employee':'Engineer')+'</label><select class="'+(f.em!=='All'?'af':'')+'" onchange="setF(\'em\',this.value)" style="min-width:100px"><option value="All">All</option>'+eO.map(o=>'<option'+(f.em===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div><div class="fg"><label>Status</label><select class="'+(es!=='All'?'af':'')+'" onchange="setF(\'st\',this.value);S.sf=null"><option value="All">All</option>'+sts.map(o=>'<option'+(es===o?' selected':'')+'>'+o+'</option>').join('')+'</select></div>'+aprFilter+'<button onclick="tCmt()" style="padding:5px 10px;border-radius:6px;border:1px solid '+(f.cmt?'#3B82F6':'#D1D5DB')+';background:'+(f.cmt?'#DBEAFE':'#fff')+';font-size:10px;font-weight:600;cursor:pointer;color:'+(f.cmt?'#1E40AF':'#6B7280')+'">\uD83D\uDCAC Comments</button>'+(anyF?'<button onclick="resF()" style="padding:5px 8px;border-radius:6px;border:0;background:#FEE2E2;color:#991B1B;font-size:10px;font-weight:600;cursor:pointer">Reset</button>':'')+'</div>'+(selP&&!isAdmin?(isSO?'<div style="padding:6px 20px 0;display:flex;gap:6px;align-items:center;font-size:11px;color:#888">'+selP+' selected <button onclick="doBConfirm()" style="padding:5px 12px;border-radius:6px;border:0;background:#8B5CF6;color:#fff;font-size:11px;font-weight:600;cursor:pointer">\uD83D\uDD12 Confirm All</button></div>':'<div style="padding:6px 20px 0;display:flex;gap:6px;align-items:center;font-size:11px;color:#888">'+selP+' selected <button onclick="doB()" style="padding:5px 12px;border-radius:6px;border:0;background:#059669;color:#fff;font-size:11px;font-weight:600;cursor:pointer">Approve All</button></div>'):'')+'<div style="padding:10px 20px 20px"><div style="background:#fff;border-radius:10px;border:1px solid #E5E7EB;overflow:hidden"><div style="overflow-x:auto"><table><thead><tr>'+thR+'</tr></thead><tbody>'+rows+'</tbody></table></div><div style="padding:12px 16px;border-top:2px solid #E5E7EB;background:#F9FAFB;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;color:#6B7280">'+fi.length+' of '+md.length+'</span><div style="display:flex;gap:20px"><div style="text-align:right"><div style="font-size:9px;color:#6B7280;text-transform:uppercase;font-weight:600">Requested</div><div style="font-weight:800;font-family:monospace;color:#111">'+reqH.toFixed((isH||isB||isA)?2:0)+'h \u00b7 <span style="color:#F59E0B">'+eur(reqH*curRate)+'</span></div></div><div style="text-align:right"><div style="font-size:9px;color:#059669;text-transform:uppercase;font-weight:600">Approved</div><div style="font-weight:800;font-family:monospace;color:#059669">'+aprH2.toFixed((isH||isB||isA)?2:0)+'h \u00b7 '+eur(aprH2*curRate)+'</div></div></div></div></div></div>'+'<div id="ov" class="ov '+(S.det?'open':'')+'" onclick="cDet()"><div class="sb" onclick="event.stopPropagation()"><div style="padding:20px 22px" id="sbc"></div></div></div>';
   if(S.det)renderSB();
 }
 
