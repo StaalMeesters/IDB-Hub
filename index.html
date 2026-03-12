@@ -385,142 +385,8 @@ async function remindApprover(it){
   toast('Reminder queued for '+approver,'ok');render();
 }
 
-async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;toast('Approving '+items.length+' items...','ok');const fns=items.map(it=>()=>{if(t==='hours')return apH(it,it.Q,'');if(t==='budel')return apB(it,it.Q,'');if(t==='arends')return apA(it,it.Q,'');return apP(it,it.Q,'')});const res=await batchRun(fns,5,600);bulkMode=false;const ok=res.filter(r=>r.status==='fulfilled').length;const fail=res.filter(r=>r.status==='rejected').length;S.sel=new Set();S.sf=null;if(fail)toast(ok+' approved, '+fail+' failed — retry those','er');else toast(ok+' approved at once','ok');render()}
-async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;toast('Confirming '+items.length+' items...','ok');const fns=items.map(it=>()=>{if(it.id.startsWith('H'))return confirmH(it);if(it.id.startsWith('B'))return confirmB(it);if(it.id.startsWith('A'))return confirmA(it);return confirmP(it)});const res=await batchRun(fns,5,600);bulkMode=false;const ok=res.filter(r=>r.status==='fulfilled').length;const fail=res.filter(r=>r.status==='rejected').length;S.sel=new Set();S.sf=null;if(fail)toast(ok+' confirmed, '+fail+' failed — retry those','er');else toast(ok+' confirmed at once','ok');render()}
-
-// FILTERING
-function norm(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim()}
-function isMe(val){if(!val)return false;const v=norm(val),n=norm(usr),m=norm(usrMail.split('@')[0].replace(/\./g,' '));return v===n||v===m||n.includes(v)||v.includes(n)||(m&&(v.includes(m)||m.includes(v)))}
-function curTab(){return S.tab==='signoff'?S.soTab:(S.tab==='admin'?S.adTab:(S.tab==='pocreate'?'pocreate':S.tab))}
-function myD(){
-  const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends';
-  if(S.tab==='signoff')return isH?S.hrs.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb):isB?S.bud.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb):isA?S.arn.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb):S.pos.filter(d=>(d.st==='Approved'||d.st==='Adjusted')&&d.sb);
-  if(S.tab==='admin')return isH?[...S.hrs]:isB?[...S.bud]:isA?[...S.arn]:[...S.pos];
-  if(isAdmin)return isH?[...S.hrs]:isB?[...S.bud]:isA?[...S.arn]:[...S.pos];
-  return isH?S.hrs.filter(d=>isMe(d.AF)):isB?S.bud.filter(d=>isMe(d.AF)):isA?S.arn.filter(d=>isMe(d.AF)):S.pos.filter(d=>isMe(d.OB));
-}
-function eS(){return S.sf||S.f.st}
-function getBaseF(){
-  let d=myD(),f=S.f;const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends',isHB=isH||isB||isA;
-  if(f.cmt)d=d.filter(x=>hasComments(x.I));
-  if(f.apr!=='All')d=d.filter(x=>(isHB?x.AF:x.OB)===f.apr||x.sb===f.apr);
-  if(isHB){
-    if(f.mo.length>0)d=d.filter(x=>x.D&&f.mo.some(m=>x.D.startsWith(m)));
-    if(f.co!=='All')d=d.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));
-    if(f.cd!=='All')d=d.filter(x=>(x.C||'--')===f.cd);
-    if(f.em!=='All')d=d.filter(x=>x.E===f.em);
-    if(f.pr!=='All')d=d.filter(x=>x.M===f.pr);
-    if(f.sp!=='All')d=d.filter(x=>(x.B||'--')===f.sp);
-  }else{
-    if(f.co!=='All')d=d.filter(x=>x.Z===f.co);
-    if(f.cd!=='All')d=d.filter(x=>x.PN===f.cd);
-    if(f.em!=='All')d=d.filter(x=>x.G===f.em);
-    if(f.pr!=='All')d=d.filter(x=>x.J===f.pr);
-    if(f.sp!=='All')d=d.filter(x=>(x.SD||'--')===f.sp);
-  }
-  return d;
-}
-function getF(){
-  let d=myD(),f=S.f,es=eS();const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends',isHB=isH||isB||isA;
-  if(es!=='All'){if(es==='Approved')d=d.filter(x=>x.st==='Approved'||x.st==='Adjusted');else if(es==='_await')d=d.filter(x=>x.fs!=='Confirmed');else if(es==='Confirmed')d=d.filter(x=>x.fs==='Confirmed');else d=d.filter(x=>x.st===es)}
-  if(f.cmt)d=d.filter(x=>hasComments(x.I));
-  if(f.apr!=='All')d=d.filter(x=>(isHB?x.AF:x.OB)===f.apr||x.sb===f.apr);
-  if(isHB){
-    if(f.mo.length>0)d=d.filter(x=>x.D&&f.mo.some(m=>x.D.startsWith(m)));
-    if(f.co!=='All')d=d.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));
-    if(f.cd!=='All')d=d.filter(x=>(x.C||'--')===f.cd);
-    if(f.em!=='All')d=d.filter(x=>x.E===f.em);
-    if(f.pr!=='All')d=d.filter(x=>x.M===f.pr);
-    if(f.sp!=='All')d=d.filter(x=>(x.B||'--')===f.sp);
-  }else{
-    if(f.co!=='All')d=d.filter(x=>x.Z===f.co);
-    if(f.cd!=='All')d=d.filter(x=>x.PN===f.cd);
-    if(f.em!=='All')d=d.filter(x=>x.G===f.em);
-    if(f.pr!=='All')d=d.filter(x=>x.J===f.pr);
-    if(f.sp!=='All')d=d.filter(x=>(x.SD||'--')===f.sp);
-  }
-  return d.sort((a,b)=>{const k=S.sortK,dir=S.sortD==='asc'?1:-1;let av=a[k],bv=b[k];if(av==null)av='';if(bv==null)bv='';if(typeof av==='number'&&typeof bv==='number')return(av-bv)*dir;return String(av).localeCompare(String(bv))*dir});
-}
-function fO(k){
-  let d=myD();const t=curTab(),isH=t==='hours',isB=t==='budel',isA=t==='arends',isHB=isH||isB||isA;const f=S.f;
-  if(k==='apr'){const fld=isHB?'AF':'OB';return[...new Set(d.map(x=>x[fld]).filter(Boolean))].sort()}
-  if(isHB){
-    if(k==='co')return[...new Set(d.map(x=>x.X||''))].sort();
-    if(k==='cd'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));return[...new Set(fd.map(x=>x.C||'--'))].sort()}
-    if(k==='em'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));return[...new Set(fd.map(x=>x.E))].sort()}
-    if(k==='pr'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>(x.X||'')===(f.co==='None'?'':f.co));if(f.cd!=='All')fd=fd.filter(x=>(x.C||'--')===f.cd);return[...new Set(fd.map(x=>x.M))].sort()}
-    if(k==='sp'){if(S.f.cd!=='All')d=d.filter(x=>(x.C||'--')===S.f.cd);else if(S.f.pr!=='All')d=d.filter(x=>x.M===S.f.pr);return[...new Set(d.map(x=>x.B||'--'))].sort()}
-    if(k==='mo'){const s=new Set();d.forEach(x=>{if(x.D){const p=x.D.split('-');if(p.length>=2)s.add(p[0]+'-'+p[1])}});return[...s].sort().map(y=>{const p=y.split('-');return{v:y,l:MS[+p[1]-1]+' '+p[0]}})}
-  }else{
-    if(k==='co')return[...new Set(d.map(x=>x.Z))].sort();
-    if(k==='cd'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>x.Z===f.co);return[...new Set(fd.map(x=>x.PN))].sort()}
-    if(k==='em'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>x.Z===f.co);return[...new Set(fd.map(x=>x.G))].sort()}
-    if(k==='pr'){let fd=d;if(f.co!=='All')fd=fd.filter(x=>x.Z===f.co);if(f.cd!=='All')fd=fd.filter(x=>x.PN===f.cd);return[...new Set(fd.map(x=>x.J))].sort()}
-    if(k==='sp'){if(S.f.cd!=='All')d=d.filter(x=>x.PN===S.f.cd);else if(S.f.pr!=='All')d=d.filter(x=>x.J===S.f.pr);return[...new Set(d.map(x=>x.SD||'--'))].sort()}
-  }
-  return[];
-}
-
-// Comment sidebar
-var cmtItem=null;
-function openCmt(id){const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;cmtItem=it;S.det=null;renderCmtSB();document.getElementById('cmtov').className='ov open';document.getElementById('cmtsb').style.display='flex';render()}
-function closeCmt(){cmtItem=null;document.getElementById('cmtov').className='ov';document.getElementById('cmtsb').style.display='none'}
-async function submitCmt(){const inp=document.getElementById('cmtInput');const text=(inp?.value||'').trim();if(!text||!cmtItem)return;inp.value='';const isH=cmtItem.id.startsWith('H'),isB=cmtItem.id.startsWith('B'),tab=isH?'hours':isB?'budel':cmtItem.id.startsWith('A')?'arends':'po';try{await addComment(cmtItem.I,tab,text);writeNotif('comment',cmtItem.I,tab,text.substring(0,80));renderCmtSB();render();toast('Comment saved','ok');
-  // If IDB Admin comments, send real-time email to assigned approver
-  if(isAdmin){
-    const it=cmtItem;
-    const approver=isH?it.AF:it.OB;
-    const itemDesc=isH?'Hours #'+it.I+' \u2014 '+it.E+' ('+it.D+')':'PO-'+it.I+' \u2014 '+(it.J||it.Z);
-    const body='<h2 style="color:#1E3A5F">IDB Approval Hub \u2014 New Comment</h2><p><b>From:</b> '+usr+'</p><p><b>Date:</b> '+new Date().toLocaleDateString('en-GB')+' '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})+'</p><hr><p><b>Task:</b> '+itemDesc+'</p><p><b>Assigned to:</b> '+approver+'</p><div style="background:#F3F4F6;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px">\uD83D\uDCAC '+text.replace(/</g,'&lt;')+'</div><hr><p><a href="'+C.redirect+'">Open IDB Approval Hub to reply</a></p>';
-    // Find approver email - check ASSIGNEE_EMAILS mapping
-    const emailMap={"Rene Bos":"rb@staalmeesters.com","Rob Bos":"rob@staalmeesters.com","Floris uit het Broek":"fub@staalmeesters.com","Ashkan Karamroudi":"ak@staalmeesters.com"};
-    const approverEmail=emailMap[approver];
-    const recip=[];
-    if(approverEmail&&approverEmail!==usrMail)recip.push({emailAddress:{address:approverEmail}});
-    if(recip.length){try{await gPost('/me/sendMail',{message:{subject:'IDB Hub \u2014 Comment on '+itemDesc,body:{contentType:'HTML',content:body},toRecipients:recip},saveToSentItems:false});toast('Comment sent to '+approver,'ok')}catch(e){console.error('Comment email failed:',e)}}
-  }
-}catch(e){toast('Failed','er')}}
-function renderCmtSB(){const el=document.getElementById('cmtsb'),it=cmtItem;if(!it){el.style.display='none';return}const cmts=getComments(it.I),isH=it.id.startsWith('H');let h='<div style="padding:16px 18px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center;flex-shrink:0"><div><div style="font-size:14px;font-weight:700">\uD83D\uDCAC Comments</div><div style="font-size:11px;color:#6B7280">'+(isH?'#'+it.I+' \u2014 '+it.E:'PO-'+it.I+' \u2014 '+(it.J||it.Z))+'</div></div><button onclick="closeCmt()" style="background:0;border:0;font-size:18px;cursor:pointer;color:#aaa">\u2715</button></div><div style="flex:1;overflow-y:auto;padding:16px 18px">';if(!cmts.length)h+='<div style="text-align:center;padding:40px 0;color:#aaa;font-size:13px">No comments yet</div>';cmts.forEach(c=>{const mine=c.email===usrMail;const d=new Date(c.ts);const ts=d.toLocaleDateString('en-GB')+' '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});h+='<div class="cmtbub '+(mine?'me':'them')+'"><div style="font-size:10px;color:#6B7280;margin-bottom:3px"><b>'+c.author+'</b> \u00b7 '+ts+'</div>'+c.text.replace(/</g,'&lt;')+'</div>'});h+='</div><div style="padding:12px 18px;border-top:1px solid #E5E7EB;flex-shrink:0;display:flex;gap:8px"><textarea id="cmtInput" placeholder="Write a comment..." style="flex:1;padding:8px 10px;border:1px solid #D1D5DB;border-radius:8px;font-size:12px;font-family:inherit;resize:none;min-height:38px;box-sizing:border-box"></textarea><button onclick="submitCmt()" style="padding:8px 16px;background:#4F46E5;color:#fff;border:0;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Send</button></div>';el.innerHTML=h}
-
-// Reassign modal
-function showReassignModal(id){
-  const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;
-  const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A'),cur=isH?it.AF:it.OB;
-  let h='<div class="modal-ov" onclick="closeModal()"><div class="modal" onclick="event.stopPropagation()"><h3 style="margin-bottom:12px">Reassign Task #'+it.I+'</h3><p style="font-size:12px;color:#6B7280;margin-bottom:12px">Current: <b>'+cur+'</b></p><div style="display:grid;gap:6px">';
-  ASSIGNEES.forEach(a=>{const sel=a===cur;h+='<button onclick="doReassign(\''+id+"','"+a.replace(/'/g,"\\'")+'\')" style="padding:10px 14px;border-radius:8px;border:1px solid '+(sel?'#4F46E5':'#E5E7EB')+';background:'+(sel?'#EEF2FF':'#fff')+';text-align:left;cursor:pointer;font-size:13px;font-family:inherit;font-weight:'+(sel?'700':'400')+'">'+a+(sel?' \u2713':'')+'</button>'});
-  h+='</div><button onclick="closeModal()" style="margin-top:12px;padding:8px 16px;border-radius:8px;border:0;background:#F3F4F6;color:#6B7280;cursor:pointer;font-size:12px;width:100%">Cancel</button></div></div>';
-  document.getElementById('modal').innerHTML=h;
-}
-function closeModal(){document.getElementById('modal').innerHTML=''}
-
-// GLOBALS
-const resetF=()=>({st:'All',co:'All',cd:'All',em:'All',pr:'All',mo:[],sp:'All',cmt:false,apr:'All'});
-window.doLogin=async()=>{document.getElementById('app').innerHTML='<div class="ldr"><div class="spin"></div>Redirecting...</div>';await login()};
-window.swTab=t=>{S.tab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
-window.swSoTab=t=>{S.soTab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
-window.swAdTab=t=>{S.adTab=t;S.f=resetF();S.sf=null;S.sel=new Set();S.sortK='D';S.sortD='asc';render()};
-window.setF=(k,v)=>{S.f[k]=v;const t=curTab();if(t==='hours'||t==='budel'||t==='arends'){if(k==='co'){S.f.cd='All';S.f.pr='All';S.f.sp='All';S.f.em='All'}else if(k==='cd'&&v!=='All'){const m=myD().find(d=>(d.C||'--')===v);if(m)S.f.pr=m.M||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.M===v);if(m)S.f.cd=m.C||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}else{if(k==='co'){S.f.cd='All';S.f.pr='All';S.f.sp='All';S.f.em='All'}else if(k==='cd'&&v!=='All'){const m=myD().find(d=>d.PN===v);if(m)S.f.pr=m.J||'All';S.f.sp='All'}else if(k==='pr'&&v!=='All'){const m=myD().find(d=>d.J===v);if(m)S.f.cd=m.PN||'All';S.f.sp='All'}else if(k==='cd'&&v==='All'){S.f.pr='All';S.f.sp='All'}else if(k==='pr'&&v==='All'){S.f.cd='All';S.f.sp='All'}}render()};
-window.toggleMo=v=>{const a=S.f.mo,i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);render()};
-window.doSort=k=>{if(S.sortK===k)S.sortD=S.sortD==='asc'?'desc':'asc';else{S.sortK=k;S.sortD='asc'}render()};
-window.cSt=k=>{S.sf=S.sf===k?null:k;S.f.st='All';render()};
-window.resF=()=>{S.f=resetF();S.sf=null;S.sel=new Set();render()};
-window.tCmt=()=>{S.f.cmt=!S.f.cmt;render()};
-window.tSel=id=>{S.sel.has(id)?S.sel.delete(id):S.sel.add(id);render()};
-window.tAll=()=>{if(S.sel.size){S.sel=new Set()}else{const isSO2=S.tab==='signoff';S.sel=new Set(getF().filter(d=>isSO2?(d.fs!=='Confirmed'):(d.st==='Pending')).map(d=>d.id))}render()};
-window.oDet=id=>{closeCmt();const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;S.det=it;const isH=it.id.startsWith('H')||it.id.startsWith('B')||it.id.startsWith('A');S.adj=isH?(it.ah??it.Q):(it.aq??it.Q);S.cmt=it.cm||'';render()};
-window.cDet=()=>{S.det=null;render()};
-window.openCmt=openCmt;
-window.oEdit=id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;it.st='Pending';it.ah=null;it.aq=null;it.sb='';S.det=it;S.adj=it.Q;S.cmt='';S.sf=null;render()};
-window.qA=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await apH(it,it.Q,'');else if(it.id.startsWith('B'))await apB(it,it.Q,'');else if(it.id.startsWith('A'))await apA(it,it.Q,'');else await apP(it,it.Q,'')}catch(e){toast('Error','er')}};
-window.qR=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await rjH(it,'');else if(it.id.startsWith('B'))await rjB(it,'');else if(it.id.startsWith('A'))await rjA(it,'');else await rjP(it,'')}catch(e){toast('Error','er')}};
-window.doA=async()=>{const d=S.det,c=document.getElementById('dcm')?.value||'';try{if(d.id.startsWith('H'))await apH(d,S.adj,c);else if(d.id.startsWith('B'))await apB(d,S.adj,c);else if(d.id.startsWith('A'))await apA(d,S.adj,c);else await apP(d,S.adj,c);cDet()}catch(e){toast('Error','er')}};
-window.doR=async()=>{const d=S.det,c=document.getElementById('dcm')?.value||'';try{if(d.id.startsWith('H'))await rjH(d,c);else if(d.id.startsWith('B'))await rjB(d,c);else if(d.id.startsWith('A'))await rjA(d,c);else await rjP(d,c);cDet()}catch(e){toast('Error','er')}};
-window.doConfirm=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await confirmH(it);else if(it.id.startsWith('B'))await confirmB(it);else if(it.id.startsWith('A'))await confirmA(it);else await confirmP(it)}catch(e){toast('Error','er')}};
-window.doReturn=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{if(it.id.startsWith('H'))await returnH(it,'');else if(it.id.startsWith('B'))await returnB(it,'');else if(it.id.startsWith('A'))await returnA(it,'');else await returnP(it,'')}catch(e){toast('Error','er')}};
-window.doReassign=async(id,name)=>{closeModal();const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{await reassign(it,name)}catch(e){toast('Error','er')}};
-window.doRemind=async id=>{const it=[...S.hrs,...S.pos,...S.bud,...S.arn].find(d=>d.id===id);if(!it)return;try{await sendRemindEmail(it)}catch(e){toast('Error','er')}};
-window.showReassignModal=showReassignModal;
-window.sAdj=v=>{S.adj=v;renderSB()};
+async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;let ok=0,fail=0;for(const it of items){try{if(t==='hours')await apH(it,it.Q,'');else if(t==='budel')await apB(it,it.Q,'');else if(t==='arends')await apA(it,it.Q,'');else await apP(it,it.Q,'');ok++}catch(e){fail++;console.error('Bulk item failed:',it.I,e)}}bulkMode=false;S.sel=new Set();S.sf=null;if(fail)toast(ok+' approved, '+fail+' failed','er');else toast(ok+' approved','ok');render()}
+async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;let ok=0,fail=0;for(const it of items){try{if(it.id.startsWith('H'))await confirmH(it);else if(it.id.startsWith('B'))await confirmB(it);else if(it.id.startsWith('A'))await confirmA(it);else await confirmP(it);ok++}catch(e){fail++;console.error('Bulk confirm failed:',it.I,e)}}bulkMode=false;S.sel=new Set();S.sf=null;if(fail)toast(ok+' confirmed, '+fail+' failed','er');else toast(ok+' confirmed','ok');render()}
 window.doB=async()=>{try{await bulkA()}catch(e){toast('Error','er')}};
 window.doBC=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
 window.doBConfirm=async()=>{try{await bulkConfirm()}catch(e){toast('Error','er')}};
@@ -877,7 +743,10 @@ function render(){
     poHTML+='</div>';
     // Rate info bar
     if(!isPORFPO){
-      poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span></div><div style="font-size:11px;color:#065F46">Total confirmed: <b>'+srcData.length+'</b> entries \u00b7 <b>'+(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)).toFixed(1)+'h</b> \u00b7 <b>'+eur(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)*srcRate)+'</b></div></div>';
+      const filtSrc=moFilter.length>0?srcData.filter(d=>d.D&&moFilter.some(m=>d.D.startsWith(m))):srcData;
+      const filtH=filtSrc.reduce((s,d)=>s+(d.ah||d.Q),0);
+      const filtLabel=moFilter.length>0?moFilter.map(m=>{const p=m.split('-');return MS[+p[1]-1]+' '+p[0]}).join(', '):'All time';
+      poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span> \u00b7 <span style="color:#059669">'+filtLabel+'</span></div><div style="font-size:11px;color:#065F46"><b>'+filtSrc.length+'</b> entries \u00b7 <b>'+filtH.toFixed(1)+'h</b> \u00b7 <b>'+eur(filtH*srcRate)+'</b></div></div>';
     }
     // Month filter
     if(moOpts.length>0){
