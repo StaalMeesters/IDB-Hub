@@ -131,7 +131,7 @@ const sc=['Files.ReadWrite.All','Sites.ReadWrite.All','User.Read','Mail.Send'];
 var tk=null,usr='',usrMail='',siteId,driveId,hFid,pFid,bFid,aFid;
 var isAdmin=false,isFinal=false,isSenior=false,canAdmin=false;
 
-var allComments=[],allNotifs=[],sessionChanges=[];
+var allComments=[],allNotifs=[],sessionChanges=[],bulkMode=false;
 
 async function login(){try{await msalApp.loginRedirect({scopes:sc})}catch(e){console.error(e)}}
 async function getTk(){const a=msalApp.getAllAccounts();if(!a.length)return null;try{const r=await msalApp.acquireTokenSilent({scopes:sc,account:a[0]});tk=r.accessToken;usr=a[0].name||a[0].username;usrMail=(a[0].username||'').toLowerCase();isAdmin=ADMINS.includes(usrMail);isFinal=usrMail===FINAL_APPROVER;isSenior=SENIORS.includes(usrMail);canAdmin=isFinal||isSenior;return tk}catch(e){await msalApp.acquireTokenRedirect({scopes:sc});return null}}
@@ -372,8 +372,8 @@ async function remindApprover(it){
   toast('Reminder queued for '+approver,'ok');render();
 }
 
-async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();const proms=items.map(it=>{if(t==='hours')return apH(it,it.Q,'');if(t==='budel')return apB(it,it.Q,'');if(t==='arends')return apA(it,it.Q,'');return apP(it,it.Q,'')});await Promise.all(proms);S.sel=new Set();toast(items.length+' approved at once','ok');render()}
-async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}const proms=items.map(it=>{if(it.id.startsWith('H'))return confirmH(it);if(it.id.startsWith('B'))return confirmB(it);if(it.id.startsWith('A'))return confirmA(it);return confirmP(it)});await Promise.all(proms);S.sel=new Set();toast(items.length+' confirmed at once','ok');render()}
+async function bulkA(){const items=getF().filter(d=>S.sel.has(d.id)&&d.st==='Pending');if(!items.length){toast('No pending items selected','er');return}const t=curTab();bulkMode=true;const proms=items.map(it=>{if(t==='hours')return apH(it,it.Q,'');if(t==='budel')return apB(it,it.Q,'');if(t==='arends')return apA(it,it.Q,'');return apP(it,it.Q,'')});await Promise.all(proms);bulkMode=false;S.sel=new Set();S.sf=null;toast(items.length+' approved at once','ok');render()}
+async function bulkConfirm(){const items=getF().filter(d=>S.sel.has(d.id)&&(d.st==='Approved'||d.st==='Adjusted')&&d.sb&&d.fs!=='Confirmed');if(!items.length){toast('No items to confirm','er');return}bulkMode=true;const proms=items.map(it=>{if(it.id.startsWith('H'))return confirmH(it);if(it.id.startsWith('B'))return confirmB(it);if(it.id.startsWith('A'))return confirmA(it);return confirmP(it)});await Promise.all(proms);bulkMode=false;S.sel=new Set();S.sf=null;toast(items.length+' confirmed at once','ok');render()}
 
 // FILTERING
 function norm(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim()}
@@ -666,6 +666,7 @@ function aprBdg(n){if(!n)return'';const c=aprCol(n);return'<span class="aprbdg" 
 function cmtBtn(id,hc){return'<button class="cbtn'+(hc?' has':'')+'" onclick="openCmt(\''+id+'\')">'+(hc?'\uD83D\uDCAC '+getComments(id.replace(/^[HP]/,'')).length:'\uD83D\uDCAC')+'</button>'}
 
 function render(){
+  if(bulkMode)return;
   const el=document.getElementById('app');
   if(S.phase==='login'){el.innerHTML='<div class="login"><div class="lbox"><img src="'+LOGO_LOGIN+'" style="height:40px;margin-bottom:12px"><h1>IDB Approval Hub</h1><p>Hours & Purchase Order Approvals</p><p>STM Group - Staalmesters</p><button class="msbtn" onclick="doLogin()"><svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>Sign in with Microsoft</button></div></div>';return}
   if(S.phase==='loading'){el.innerHTML='<div class="ldr"><div class="spin"></div>Loading from SharePoint...</div>';return}
