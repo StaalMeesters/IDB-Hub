@@ -154,7 +154,7 @@ async function gPost(u,b){const r=await fetch('https://graph.microsoft.com/v1.0'
 async function findSite(){if(driveId)return;const s=await gGet('/sites/'+C.siteHost+':'+C.sitePath);siteId=s.id;const d=await gGet('/sites/'+siteId+'/drive');driveId=d.id}
 async function findFile(n){try{return(await gGet('/drives/'+driveId+'/root:/'+encodeURIComponent(n))).id}catch(e){const s=await gGet('/drives/'+driveId+"/root/search(q='"+encodeURIComponent(n)+"')");const m=s.value.find(f=>f.name===n);if(m)return m.id;throw new Error('Not found: '+n)}}
 async function readXL(fid,sh,rng){const path='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/"+(rng?"range(address='"+rng+"')?$select=values":"usedRange?$select=values");try{return await gGet(path)}catch(e){throw e}}
-async function writeR(fid,sh,addr,vals){const url='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/range(address='"+addr+"')";try{await gPatch(url,{values:[vals]})}catch(e){console.warn('writeR retry',addr,e.message);await getTk();await gPatch(url,{values:[vals]})}}
+async function writeR(fid,sh,addr,vals){const url='/drives/'+driveId+"/items/"+fid+"/workbook/worksheets('"+encodeURIComponent(sh)+"')/range(address='"+addr+"')";for(let attempt=0;attempt<3;attempt++){try{await gPatch(url,{values:[vals]});return}catch(e){console.warn('writeR attempt '+(attempt+1)+' failed:',addr,e.message);if(attempt<2){await getTk();await new Promise(r=>setTimeout(r,300*(attempt+1)));}else throw e}}}
 
 // Sheets helper - create if missing
 async function ensureSheet(fid,name,headers){
