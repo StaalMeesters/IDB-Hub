@@ -875,7 +875,7 @@ function render(){
     poHTML+='</div>';
     // Rate info bar
     if(!isPORFPO){
-      const filtH2=fSrcData.reduce((s,d)=>s+(d.ah||d.Q),0);poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span>'+(selCo!=='All'?' \u00b7 <span style="color:#4F46E5;font-weight:600">'+selCo+'</span>':'')+'</div><div style="font-size:11px;color:#065F46"><b>'+fSrcData.length+'</b> entries \u00b7 <b>'+filtH2.toFixed(1)+'h</b> \u00b7 <b>'+eur(filtH2*srcRate)+'</b></div></div>';
+     const filtSrc2=moFilter.length>0?fSrcData.filter(d=>d.D&&moFilter.some(m=>d.D.startsWith(m))):fSrcData;const filtH2=filtSrc2.reduce((s,d)=>s+(d.ah||d.Q),0);poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span>'+(selCo!=='All'?' \u00b7 <span style="color:#4F46E5;font-weight:600">'+selCo+'</span>':'')+'</div><div style="font-size:11px;color:#065F46"><b>'+filtSrc2.length+'</b> entries \u00b7 <b>'+filtH2.toFixed(1)+'h</b> \u00b7 <b>'+eur(filtH2*srcRate)+'</b></div></div>'; 
     }
     // Month filter
     if(moOpts.length>0){
