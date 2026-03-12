@@ -825,7 +825,7 @@ function render(){
     const srcLabel=isPOIDB?'IDB':isPOBud?'Ing. Budel':isPOArn?'Ing. Arends':'RFPO';
     // Group hours by month → project → subphase
     const hGroups={};
-    srcData.forEach(d=>{
+    fSrcData.forEach(d=>{
       const mo=d.D?d.D.substring(0,7):'unknown';
       const pk=d.C||'--';const sk=d.Su||d.B||pk;
       const key=mo+'|'+pk+'|'+sk;
@@ -835,7 +835,7 @@ function render(){
     });
     // Group PO requests
     const pGroups={};
-    if(isPORFPO){confPO.forEach(d=>{
+    if(isPORFPO){fConfPO.forEach(d=>{
       const mo=d.D?d.D.substring(0,7):'unknown';
       const key=mo+'|'+d.PN+'|'+(d.Sp||'--');
       if(!pGroups[key])pGroups[key]={month:mo,projectCode:d.PN||'',projectName:d.J||'',subphase:d.Sp||'',subName:d.SD||'',quantity:0,engineer:d.G||'',work:d.W||'',ids:[],company:d.Z||''};
@@ -862,9 +862,20 @@ function render(){
     poHTML+='<button class="subtab '+(isPOArn?'on':'')+'" onclick="S.poTab=\'arends\';S.f.mo=[];render()" style="'+(isPOArn?'border-bottom:2px solid #D97706;color:#D97706':'')+'">Ing. Arends '+(cntArn?'<span style="background:#D9770620;color:#D97706;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+cntArn+'</span>':'')+'</button>';
     poHTML+='<button class="subtab '+(isPORFPO?'on':'')+'" onclick="S.poTab=\'rfpo\';S.f.mo=[];render()" style="'+(isPORFPO?'border-bottom:2px solid #059669;color:#059669':'')+'">RFPO '+(cntPO?'<span style="background:#05966920;color:#059669;font-size:9px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px">'+cntPO+'</span>':'')+'</button>';
     poHTML+='</div>';
+    // Company filter
+    const coSet=new Set();srcData.forEach(d=>{if(d.X)coSet.add(d.X)});if(isPORFPO)confPO.forEach(d=>{if(d.Z)coSet.add(d.Z)});
+    const coList=['ST','STP','STPR','PAX'].filter(c=>coSet.has(c)||true);
+    const selCo=S.f.co;
+    poHTML+='<div style="padding:10px 20px 0;display:flex;gap:6px;align-items:center"><span style="font-size:10px;color:#6B7280;font-weight:600;margin-right:4px">COMPANY</span>';
+    poHTML+='<button onclick="S.f.co=\'All\';render()" style="padding:4px 14px;border-radius:12px;border:1px solid '+(selCo==='All'?'#4F46E5':'#D1D5DB')+';background:'+(selCo==='All'?'#EEF2FF':'#fff')+';font-size:11px;font-weight:'+(selCo==='All'?'700':'500')+';cursor:pointer;color:'+(selCo==='All'?'#4F46E5':'#6B7280')+';font-family:inherit">All</button>';
+    coList.forEach(co=>{const sel2=selCo===co;const cnt=isPORFPO?confPO.filter(d=>d.Z===co).length:srcData.filter(d=>d.X===co).length;if(!cnt)return;poHTML+='<button onclick="S.f.co=\''+co+'\';render()" style="padding:4px 14px;border-radius:12px;border:1px solid '+(sel2?'#4F46E5':'#D1D5DB')+';background:'+(sel2?'#EEF2FF':'#fff')+';font-size:11px;font-weight:'+(sel2?'700':'500')+';cursor:pointer;color:'+(sel2?'#4F46E5':'#6B7280')+';font-family:inherit">'+co+' <span style="font-size:9px;opacity:.6">'+cnt+'</span></button>'});
+    poHTML+='</div>';
+    // Filter data by company
+    const fSrcData=selCo!=='All'?srcData.filter(d=>d.X===selCo):srcData;
+    const fConfPO=selCo!=='All'?confPO.filter(d=>d.Z===selCo):confPO;
     // Rate info bar
     if(!isPORFPO){
-      poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span></div><div style="font-size:11px;color:#065F46">Total confirmed: <b>'+srcData.length+'</b> entries \u00b7 <b>'+(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)).toFixed(1)+'h</b> \u00b7 <b>'+eur(srcData.reduce((s,d)=>s+(d.ah||d.Q),0)*srcRate)+'</b></div></div>';
+      const filtH2=fSrcData.reduce((s,d)=>s+(d.ah||d.Q),0);poHTML+='<div style="padding:8px 20px;background:#F0FDF4;border-bottom:1px solid #D1FAE5;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:#065F46"><b>'+srcLabel+'</b> \u00b7 Rate: <span style="font-weight:700">\u20AC'+srcRate+'/h</span>'+(selCo!=='All'?' \u00b7 <span style="color:#4F46E5;font-weight:600">'+selCo+'</span>':'')+'</div><div style="font-size:11px;color:#065F46"><b>'+fSrcData.length+'</b> entries \u00b7 <b>'+filtH2.toFixed(1)+'h</b> \u00b7 <b>'+eur(filtH2*srcRate)+'</b></div></div>';
     }
     // Month filter
     if(moOpts.length>0){
